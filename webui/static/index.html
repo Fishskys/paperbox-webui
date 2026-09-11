@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>paperbox 控制台</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header class="statusbar">
+      <div class="brand">paperbox <span class="brand-sub">控制台</span></div>
+      <div class="status-chips" id="health-chips">
+        <span class="chip chip-pending" data-service="postgres">postgres · …</span>
+        <span class="chip chip-pending" data-service="opensearch">opensearch · …</span>
+        <span class="chip chip-pending" data-service="minio">minio · …</span>
+        <span class="chip chip-pending" data-service="embedding">embedding · …</span>
+        <span class="chip chip-info" id="chip-papers">论文 · …</span>
+        <span class="chip chip-info" id="chip-jobs">任务 · …</span>
+      </div>
+      <div class="status-meta">
+        <span id="health-version" class="muted">版本 …</span>
+        <span id="health-time" class="muted"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-health">刷新状态</button>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab is-active" role="tab" data-tab="search" aria-selected="true">检索</button>
+      <button type="button" class="tab" role="tab" data-tab="library" aria-selected="false">论文库</button>
+      <button type="button" class="tab" role="tab" data-tab="ingest" aria-selected="false">导入</button>
+      <button type="button" class="tab" role="tab" data-tab="jobs" aria-selected="false">任务</button>
+    </nav>
+
+    <main class="panels">
+      <!-- Tab 1: 检索 -->
+      <section class="panel is-active" id="panel-search" role="tabpanel">
+        <form class="card form-grid" id="search-form">
+          <label class="field field-wide">
+            <span>查询</span>
+            <input type="search" id="search-query" placeholder="例如：attention" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>模式</span>
+            <select id="search-mode">
+              <option value="hybrid" selected>hybrid</option>
+              <option value="keyword">keyword</option>
+              <option value="semantic">semantic</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>top_k</span>
+            <input type="number" id="search-topk" value="10" min="1" max="100" />
+          </label>
+          <label class="field">
+            <span>年份从</span>
+            <input type="number" id="filter-year-from" placeholder="2015" min="1900" max="2100" />
+          </label>
+          <label class="field">
+            <span>年份到</span>
+            <input type="number" id="filter-year-to" placeholder="2024" min="1900" max="2100" />
+          </label>
+          <label class="field">
+            <span>作者</span>
+            <input type="text" id="filter-authors" placeholder="逗号分隔" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>期刊 / 会议</span>
+            <input type="text" id="filter-venue" placeholder="venue" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>DOI</span>
+            <input type="text" id="filter-doi" placeholder="10.xxxx/…" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>arXiv</span>
+            <input type="text" id="filter-arxiv" placeholder="1706.03762" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>标签</span>
+            <input type="text" id="filter-tag" placeholder="tag" autocomplete="off" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-search">检索</button>
+            <button type="reset" class="btn btn-ghost" id="btn-search-reset">重置</button>
+          </div>
+        </form>
+
+        <div class="result-head" id="search-summary" hidden></div>
+        <div class="results" id="search-results"></div>
+        <p class="empty" id="search-empty">输入关键词后点击「检索」。</p>
+      </section>
+
+      <!-- Tab 2: 论文库 -->
+      <section class="panel" id="panel-library" role="tabpanel">
+        <form class="card toolbar" id="library-form">
+          <label class="field">
+            <span>标题搜索</span>
+            <input type="search" id="library-q" placeholder="标题关键字" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>状态</span>
+            <select id="library-status">
+              <option value="">全部</option>
+              <option value="RECEIVED">RECEIVED</option>
+              <option value="DOWNLOADING">DOWNLOADING</option>
+              <option value="PARSING">PARSING</option>
+              <option value="INDEXED">INDEXED</option>
+              <option value="FAILED">FAILED</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">查询</button>
+            <button type="button" class="btn btn-ghost" id="btn-library-refresh">刷新</button>
+          </div>
+        </form>
+
+        <div class="card table-wrap">
+          <table class="table" id="library-table">
+            <thead>
+              <tr>
+                <th>标题</th>
+                <th>年份</th>
+                <th>状态</th>
+                <th>作者数</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="library-body"></tbody>
+          </table>
+          <p class="empty" id="library-empty" hidden>没有匹配的论文。</p>
+        </div>
+
+        <div class="pager">
+          <button type="button" class="btn btn-ghost" id="library-prev">上一页</button>
+          <span id="library-page-info">第 1 页</span>
+          <button type="button" class="btn btn-ghost" id="library-next">下一页</button>
+        </div>
+      </section>
+
+      <!-- Tab 3: 导入 -->
+      <section class="panel" id="panel-ingest" role="tabpanel">
+        <form class="card" id="ingest-url-form">
+          <h2>通过 URL 导入</h2>
+          <label class="field field-wide">
+            <span>PDF 链接</span>
+            <input type="url" id="ingest-url" placeholder="https://arxiv.org/pdf/1706.03762" autocomplete="off" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">提交导入</button>
+          </div>
+        </form>
+
+        <form class="card" id="ingest-file-form">
+          <h2>上传本地 PDF</h2>
+          <label class="field field-wide">
+            <span>选择文件</span>
+            <input type="file" id="ingest-file" accept="application/pdf,.pdf" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">上传并导入</button>
+          </div>
+        </form>
+
+        <div class="card" id="ingest-progress-card" hidden>
+          <h2>导入进度</h2>
+          <div class="progress-meta">
+            <span>job_id：<code id="ingest-job-id">-</code></span>
+            <span id="ingest-stage-label">等待中…</span>
+          </div>
+          <div class="progress-bar" id="ingest-progress-bar"><span id="ingest-progress-fill"></span></div>
+          <div class="progress-detail">
+            <span id="ingest-progress-pct">0%</span>
+            <span id="ingest-duplicate" hidden>重复论文（已存在）</span>
+          </div>
+          <p class="error-text" id="ingest-error" hidden></p>
+          <p id="ingest-paper-link" hidden></p>
+        </div>
+      </section>
+
+      <!-- Tab 4: 任务 -->
+      <section class="panel" id="panel-jobs" role="tabpanel">
+        <form class="card toolbar" id="jobs-form">
+          <label class="field">
+            <span>条数</span>
+            <input type="number" id="jobs-limit" value="20" min="1" max="200" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-jobs-refresh">刷新</button>
+            <label class="check"><input type="checkbox" id="jobs-auto" /> 每 5 秒自动刷新</label>
+          </div>
+        </form>
+
+        <div class="card table-wrap">
+          <table class="table" id="jobs-table">
+            <thead>
+              <tr>
+                <th>job_id</th>
+                <th>stage</th>
+                <th>进度</th>
+                <th>重复</th>
+                <th>错误信息</th>
+                <th>创建时间</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-body"></tbody>
+          </table>
+          <p class="empty" id="jobs-empty" hidden>暂无任务。</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- 论文详情抽屉 -->
+    <div class="drawer-mask" id="detail-mask" hidden></div>
+    <aside class="drawer" id="detail-drawer" hidden aria-label="论文详情">
+      <div class="drawer-head">
+        <h2 id="detail-title">论文详情</h2>
+        <button type="button" class="btn btn-ghost btn-sm" id="detail-close">关闭</button>
+      </div>
+      <div class="drawer-body" id="detail-body"></div>
+    </aside>
+
+    <div class="toast-stack" id="toast-stack"></div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
