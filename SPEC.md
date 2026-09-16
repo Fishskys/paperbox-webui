@@ -1,11 +1,10 @@
-# paperbox-webui — 实现规范（codex 的唯一依据）
+# paperbox-webui — 实现规范
 
-给 **paperbox**（论文知识服务 REST API）做一个**简易 WebUI**，用途是让主人手工测试 paperbox 的
+给 **paperbox**（论文知识服务 REST API）做一个**简易 WebUI**，用途是手工测试 paperbox 的
 全部功能：导入、检索、浏览论文、查看证据片段、重建索引、删除。
 
-`D:\hermes\paperbox` 是后端服务（FastAPI，端口 **8077**），其 API 一览与调用示例见
-`D:\hermes\paperbox\docs\hermes-integration.md` 与 `D:\hermes\paperbox\README.md`。
-**不要读 paperbox 的 plan.md**（与本任务无关）。
+paperbox 后端服务（FastAPI，端口 **8077**）另行维护，本仓库不含其代码；
+其 API 一览与调用示例见该仓库的 `docs/hermes-integration.md` 与 `README.md` 的等价文档。
 
 ## 0. 技术栈与硬约束
 
@@ -16,7 +15,6 @@
 - 端口 **8088**，`uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088`。
 - **API Key 只在服务端**：浏览器只访问本服务的 `/api/ui/*`，由后端带 Bearer 转发到 paperbox。
   不引入 CORS（同源）。
-- 不要删文件：Windows 沙箱会拒绝 `Remove-Item` / `del` / `rm` 并**中断你的会话**。
 
 ## 1. 目录结构
 

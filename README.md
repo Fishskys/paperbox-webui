@@ -1,6 +1,6 @@
 # paperbox-webui
 
-给 [paperbox](../paperbox) 论文知识服务做的**简易 WebUI**，用来人工测试它的全部功能：
+给 **paperbox**（论文知识服务 REST API，其后端仓库另行维护）做的**简易 WebUI**，用来人工测试它的全部功能：
 导入论文、混合检索、浏览论文库、查看证据片段、重建索引、软删除。
 
 - 前端：原生 HTML/CSS/JS（**无构建步骤、无 CDN、离线可用**），单页 + 四个 Tab
@@ -14,18 +14,18 @@
 
 ## 1. 前置条件
 
-paperbox 必须先在 **8077** 端口运行（本机的依赖服务是 WSL2 里的
-PostgreSQL / OpenSearch / MinIO / Embedding，见 `../paperbox/README.md`）：
+paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
+由 paperbox 一侧自行启动，本仓库不含这些组件）：
 
 ```powershell
-cd D:\hermes\paperbox
+cd <paperbox 后端目录>
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8077
 ```
 
 ## 2. 安装与启动
 
 ```powershell
-cd D:\hermes\paperbox-webui
+cd <本仓库目录>
 uv sync                                  # 按 uv.lock 建 .venv 并装依赖
 copy .env.example .env                   # 首次：填 PAPERBOX_API_BASE / PAPERBOX_API_KEY
 uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088
