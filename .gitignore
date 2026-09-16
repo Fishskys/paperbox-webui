@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 *.log
 codex_*.log
+
+# 本地界面截图，不随仓库发布
+docs/screenshots/

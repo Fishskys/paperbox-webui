@@ -44,12 +44,8 @@ uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088
 
 ## 3. 界面
 
-![检索](docs/screenshots/01-search.png)
-
-| | |
-|---|---|
-| ![论文库](docs/screenshots/02-library.png) | ![导入](docs/screenshots/03-ingest.png) |
-| ![任务](docs/screenshots/04-jobs.png) | ![详情抽屉](docs/screenshots/05-detail.png) |
+单页 + 四个 Tab，顶部一条常驻状态条。下面按 Tab 说明用途（界面截图未随仓库发布，
+本机起来后打开 <http://127.0.0.1:8088/> 即可看到）：
 
 顶部状态条：paperbox 四个依赖（postgres/opensearch/minio/embedding）的健康徽标、
 论文总数、任务总数、paperbox 版本，每 15 秒自动刷新（也可点「刷新」）。
@@ -118,3 +114,7 @@ webui/
 tests/               后端代理层单测（MockTransport）
 SPEC.md              本项目的实现规范
 ```
+
+## 7. 许可
+
+MIT，见 `LICENSE`。
