@@ -80,10 +80,20 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
 **Tab 2「论文库」**：表格（标题 / 年份 / 状态 / 作者数 / 创建时间），支持状态过滤 + 标题搜索 + 分页
 （20/页）；每行操作按钮：详情、下载原文、重建索引、删除（二次确认）。
 
-**Tab 3「导入」**：URL 输入框 + 文件选择（multipart），提交后显示 job_id 与进度条；
-每 2s 轮询 `GET /api/ui/jobs/{id}`，把 stage 映射成可读步骤
-（RECEIVED→DOWNLOADING→STORED→PARSING→CHUNKING→EMBEDDING→INDEXING→COMPLETED，FAILED 显示 error_message）；
-完成/重复时给出论文链接（可跳到详情）。
+**Tab 3「导入」**：URL 输入框 + **多选文件队列**。文件 input 必须带 `multiple`
+（并可接受拖拽投放，含文件夹）；选中后进入队列列表，每项独立展示
+（文件名 / 大小 / 状态徽标 / 进度条 / 取消按钮），ITEM 状态机：
+待上传 → 上传中(上传字节百分比) → 已提交 → 解析中(stage，n/8 + 百分比) → 已完成 | 重复论文 | 失败 | 已取消。
+实现要点：
+
+- 上传用 `XMLHttpRequest`（`xhr.upload.onprogress`）拿上传进度；提交后每 2s 轮询
+  `GET /api/ui/jobs/{id}`，把 stage 映射成可读步骤
+  （RECEIVED→DOWNLOADING→STORED→PARSING→CHUNKING→EMBEDDING→INDEXING→COMPLETED，FAILED 显示 error_message）。
+- **串行**处理队列（同一时间只跑一项），避免同时打满后端解析 / 向量化流水线。
+- 「开始上传 / 停止 / 清空已完成」+「加入后自动开始」（默认勾选）；停止只终止本页跟踪
+  （paperbox 无取消接口，已提交的导入任务会自己跑完）。
+- 前端就地拒绝非 PDF 与 >100MB 的文件（`error_message` 与 `INGEST_MAX_FILE_MB` 对齐）。
+- 完成 / 重复项给出论文链接（可跳到详情抽屉），结束后刷新顶部状态条的论文 / 任务计数。
 
 **Tab 4「任务」**：最近任务表格（stage / progress / duplicate / error_message / 时间），可手动刷新。
 

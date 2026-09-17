@@ -59,10 +59,14 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 支持状态过滤与标题搜索、20 条一页的分页；每行可「详情 / 下载原文 / 重建索引 / 删除」
 （删除需二次确认，是软删除）。
 
-**③ 导入** — URL 导入或选择本地 PDF 上传；提交后显示 job_id 与进度条，
-每 2 秒轮询任务阶段：`RECEIVED → DOWNLOADING → STORED → PARSING → CHUNKING →
-EMBEDDING → INDEXING → COMPLETED`（失败显示错误信息）。重复论文会提示 duplicate
-并直接给出已有论文。
+**③ 导入** — URL 输入框，或**多选本地 PDF 组成上传队列**（也可直接把文件 / 整个文件夹拖进投放区）。
+队列里每一项独立显示状态：待上传 → 上传中 x% → 已提交 → paperbox 阶段
+（`RECEIVED → DOWNLOADING → STORED → PARSING → CHUNKING → EMBEDDING → INDEXING → COMPLETED`）→
+已完成 / 重复论文 / 失败（失败给出 `error_message`）；URL 与本地上传共用同一条队列。
+上传**逐个串行**执行（同一时间只跑一项），避免同时打满后端的解析 / 向量化流水线；
+「加入后自动开始」默认勾选，「停止」中止整队、「取消」只中止当前项、失败项不阻塞后续项。
+非 PDF 与超过 100MB 的文件在前端就地拒绝。注意：paperbox 没有取消接口，
+「停止 / 取消」只结束本页的跟踪，已经在后端排队的导入任务仍会自己跑完。
 
 **④ 任务** — 最近任务表格（阶段 / 进度 / 是否重复 / 错误 / 时间），可手动刷新。
 
@@ -98,9 +102,10 @@ paperbox 不可达时返回 `502` + `{"detail": "paperbox unreachable: ..."}`；
 uv run pytest
 ```
 
-22 个测试，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：健康聚合与降级、
+24 个测试，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：健康聚合与降级、
 参数透传（分页/状态/标题搜索/chunks/任务）、错误透传与 502、检索请求体逐字转发、
-导入 URL 的两种请求体与非法输入、multipart 上传、原文流式下载、首页 HTML。
+导入 URL 的两种请求体与非法输入、multipart 上传、原文流式下载、首页 HTML，
+以及两个静态资源守卫（多选上传队列的 DOM 结构、`app.js` 里的队列实现）。
 
 ## 6. 目录
 
