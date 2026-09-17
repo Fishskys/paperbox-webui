@@ -32,8 +32,7 @@
   var state = {
     library: { offset: 0, total: 0, loading: false },
     jobsAutoTimer: null,
-    jobPollTimer: null,
-    currentJobId: null
+    queue: { items: [], seq: 0, running: false, halt: false, current: null }
   };
 
   function $(id) {
@@ -657,76 +656,550 @@
       });
   }
 
-  /* ---------------- Tab 3：导入 ---------------- */
+  /* ---------------- Tab 3：导入（上传队列） ---------------- */
 
-  function showProgress(jobId) {
-    state.currentJobId = jobId;
-    $("ingest-progress-card").hidden = false;
-    $("ingest-job-id").textContent = jobId || "-";
-    $("ingest-error").hidden = true;
-    $("ingest-paper-link").hidden = true;
-    $("ingest-duplicate").hidden = true;
-    setProgress(0, "等待中…");
+  var QUEUE_POLL_MS = 2000;      // 队列内单个任务的轮询间隔
+  var QUEUE_MAX_RETRY = 15;      // 轮询连续失败上限（后端重启/网络抖动时重试，超过判定失败）
+  var FILE_MAX_MB = 100;         // 与 paperbox 侧 INGEST_MAX_FILE_MB 对齐，超限就地拦下
+
+  var QUEUE_CHIP = {
+    pending: ["chip-pending", "待上传"],
+    uploading: ["chip-info", "上传中"],
+    submitted: ["chip-info", "已提交"],
+    processing: ["chip-pending", "解析中"],
+    done: ["chip-ok", "已完成"],
+    duplicate: ["chip-info", "重复论文"],
+    failed: ["chip-error", "失败"],
+    canceled: ["chip-info", "已取消"]
+  };
+
+  function queueIsActive(item) {
+    return item.status === "uploading" || item.status === "submitted" || item.status === "processing";
   }
 
-  function setProgress(percent, label) {
-    var value = typeof percent === "number" ? Math.max(0, Math.min(100, percent)) : 0;
-    $("ingest-progress-fill").style.width = value + "%";
-    $("ingest-progress-pct").textContent = value.toFixed(0) + "%";
-    if (label) $("ingest-stage-label").textContent = label;
+  function queueIsPending(item) {
+    return item.status === "pending";
   }
 
-  function pollJob(jobId) {
-    if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
-    api("/api/ui/jobs/" + encodeURIComponent(jobId))
-      .then(function (job) {
-        var progress = typeof job.progress === "number" ? job.progress : 0;
-        var label = stageLabel(job.stage);
-        if (job.stage && job.stage !== "FAILED" && job.stage !== "COMPLETED") {
-          label = label + "（" + (stageIndex(job.stage) + 1) + "/" + STAGES.length + "）";
+  function queueIsFinished(item) {
+    return item.status === "done" || item.status === "duplicate" ||
+      item.status === "failed" || item.status === "canceled";
+  }
+
+  function newQueueItem(kind, name, size, extra) {
+    var item = {
+      id: "q" + (++state.queue.seq),
+      kind: kind,                 // "file" | "url"
+      name: name,
+      size: typeof size === "number" ? size : null,
+      status: "pending",          // pending | uploading | submitted | processing | done | duplicate | failed | canceled
+      percent: 0,
+      label: "待上传",
+      jobId: null,
+      paperId: null,
+      error: null,
+      file: null,
+      url: null,
+      xhr: null,
+      timer: null,
+      retries: 0,
+      node: null
+    };
+    var extraKeys = extra || {};
+    for (var key in extraKeys) {
+      if (Object.prototype.hasOwnProperty.call(extraKeys, key)) item[key] = extraKeys[key];
+    }
+    return item;
+  }
+
+  function queueFind(id) {
+    for (var i = 0; i < state.queue.items.length; i++) {
+      if (state.queue.items[i].id === id) return state.queue.items[i];
+    }
+    return null;
+  }
+
+  function queueSummaryText() {
+    var items = state.queue.items;
+    if (!items.length) return "（空）";
+    var counts = { pending: 0, running: 0, done: 0, duplicate: 0, failed: 0, canceled: 0 };
+    items.forEach(function (item) {
+      if (queueIsPending(item)) counts.pending += 1;
+      else if (queueIsActive(item)) counts.running += 1;
+      else if (item.status === "done") counts.done += 1;
+      else if (item.status === "duplicate") counts.duplicate += 1;
+      else if (item.status === "failed") counts.failed += 1;
+      else counts.canceled += 1;
+    });
+    var parts = ["共 " + items.length + " 项"];
+    if (counts.running) parts.push("进行中 " + counts.running);
+    if (counts.pending) parts.push("待上传 " + counts.pending);
+    if (counts.done) parts.push("完成 " + counts.done);
+    if (counts.duplicate) parts.push("重复 " + counts.duplicate);
+    if (counts.failed) parts.push("失败 " + counts.failed);
+    return "（" + parts.join(" · ") + "）";
+  }
+
+  function queueSyncControls() {
+    var items = state.queue.items;
+    var hasPending = items.some(queueIsPending);
+    var hasFinished = items.some(queueIsFinished);
+    $("queue-summary").textContent = queueSummaryText();
+    $("queue-empty").hidden = items.length > 0;
+    var startBtn = $("btn-queue-start");
+    startBtn.disabled = state.queue.running || !hasPending;
+    startBtn.textContent = state.queue.running ? "上传中…" : "开始上传";
+    $("btn-queue-stop").hidden = !state.queue.running;
+    $("btn-queue-clear").disabled = !hasFinished;
+  }
+
+  function queueItemLabel(item) {
+    if (item.status === "uploading") return "上传中 " + Math.round(item.percent) + "%";
+    if (item.status === "submitted") return item.label;
+    return item.label;
+  }
+
+  function paintQueueItem(item) {
+    var refs = item.node;
+    if (!refs) return;
+    var chip = QUEUE_CHIP[item.status] || ["chip-info", item.status];
+    refs.chip.className = "chip " + chip[0] + " queue-item-chip";
+    refs.chip.textContent = chip[1];
+    refs.root.className = "queue-item queue-" + item.status;
+    refs.status.textContent = queueItemLabel(item);
+
+    var percent = item.percent || 0;
+    if (item.status === "done" || item.status === "duplicate") percent = 100;
+    if (item.status === "failed") percent = item.percent || 0;
+    refs.fill.style.width = Math.max(0, Math.min(100, percent)) + "%";
+
+    refs.cancel.textContent = queueIsActive(item) ? "取消" : "移除";
+    refs.cancel.disabled = !(queueIsPending(item) || queueIsActive(item));
+
+    clear(refs.link);
+    if (item.paperId && (item.status === "done" || item.status === "duplicate" || item.status === "processing")) {
+      var link = el("button", "link-title", "查看论文 " + String(item.paperId).slice(0, 8));
+      link.type = "button";
+      link.addEventListener("click", function () {
+        openDetail(item.paperId);
+      });
+      refs.link.appendChild(link);
+    } else if (item.error) {
+      refs.link.textContent = "原因：" + item.error;
+      refs.link.className = "queue-item-link error-text";
+    } else {
+      refs.link.className = "queue-item-link muted";
+    }
+    // 进度事件很密，这里只刷新摘要文字，按钮状态交给 queueSyncControls()
+    var summaryNode = $("queue-summary");
+    if (summaryNode) summaryNode.textContent = queueSummaryText();
+  }
+
+  function renderQueueItem(item) {
+    var root = el("li", "queue-item queue-" + item.status);
+
+    var head = el("div", "queue-item-head");
+    var name = el("span", "queue-item-name", item.name);
+    name.title = item.name;
+    head.appendChild(name);
+    if (item.size !== null) head.appendChild(el("span", "muted queue-item-size", fmtSize(item.size)));
+    var chip = el("span", "chip chip-info queue-item-chip", "");
+    head.appendChild(chip);
+    var actions = el("span", "queue-item-actions");
+    var cancel = el("button", "btn btn-ghost btn-sm", "移除");
+    cancel.type = "button";
+    cancel.addEventListener("click", function () {
+      queueRemove(item.id);
+    });
+    actions.appendChild(cancel);
+    head.appendChild(actions);
+    root.appendChild(head);
+
+    var bar = el("div", "progress-bar queue-item-bar");
+    var fill = el("span");
+    bar.appendChild(fill);
+    root.appendChild(bar);
+
+    var foot = el("div", "queue-item-foot");
+    var status = el("span", "muted");
+    foot.appendChild(status);
+    var link = el("span", "queue-item-link muted");
+    foot.appendChild(link);
+    root.appendChild(foot);
+
+    item.node = { root: root, chip: chip, fill: fill, status: status, link: link, cancel: cancel };
+    paintQueueItem(item);
+    return root;
+  }
+
+  function renderQueue() {
+    var list = $("queue-list");
+    clear(list);
+    state.queue.items.forEach(function (item) {
+      list.appendChild(renderQueueItem(item));
+    });
+    queueSyncControls();
+  }
+
+  function queueAdd(items) {
+    var existing = {};
+    state.queue.items.forEach(function (item) {
+      existing[item.kind + "|" + item.name + "|" + (item.size || 0)] = item;
+    });
+    var added = 0;
+    var skipped = 0;
+    items.forEach(function (item) {
+      var key = item.kind + "|" + item.name + "|" + (item.size || 0);
+      var live = existing[key];
+      if (live && !queueIsFinished(live)) {   // 只有仍在队列里（未结束）的同名项才拦
+        skipped += 1;
+        return;
+      }
+      existing[key] = item;
+      state.queue.items.push(item);
+      added += 1;
+    });
+    if (added) renderQueue();
+    else queueSyncControls();
+    if (added && $("queue-autostart").checked && !state.queue.running) queueStart();
+    return { added: added, skipped: skipped };
+  }
+
+  function queueAddFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    var items = [];
+    var rejected = [];
+    files.forEach(function (file) {
+      var isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+      if (!isPdf) {
+        rejected.push(file.name + "（非 PDF）");
+        return;
+      }
+      if (file.size > FILE_MAX_MB * 1024 * 1024) {
+        rejected.push(file.name + "（超过 " + FILE_MAX_MB + "MB）");
+        return;
+      }
+      items.push(newQueueItem("file", file.name, file.size, { file: file }));
+    });
+    var result = queueAdd(items);
+    if (rejected.length) {
+      toast("已跳过 " + rejected.length + " 个文件：" + rejected.slice(0, 3).join("、") +
+        (rejected.length > 3 ? " …" : ""), "warn");
+    }
+    if (result.added) toast("已加入队列 " + result.added + " 个文件", "ok");
+    else if (!rejected.length && files.length) toast("这些文件已在队列里", "info");
+    return result;
+  }
+
+  function queueAddUrl(url) {
+    var result = queueAdd([newQueueItem("url", url, null, { url: url })]);
+    if (!result.added) toast("该链接已在队列里", "info");
+    return result.added > 0;
+  }
+
+  function queueRemove(id) {
+    var item = queueFind(id);
+    if (!item) return;
+    if (queueIsActive(item)) {
+      queueCancelItem(item);
+      return;
+    }
+    state.queue.items = state.queue.items.filter(function (other) {
+      return other.id !== id;
+    });
+    renderQueue();
+  }
+
+  function queueMarkCanceled(item) {
+    if (item.timer) {
+      window.clearTimeout(item.timer);
+      item.timer = null;
+    }
+    item.status = "canceled";
+    item.label = "已取消";
+    item.error = null;
+    paintQueueItem(item);
+    queueSyncControls();
+  }
+
+  function queueCancelItem(item) {
+    if (item.xhr) {
+      item.xhr.abort();
+      item.xhr = null;
+    }
+    queueMarkCanceled(item);
+  }
+
+  function queueClearFinished() {
+    state.queue.items = state.queue.items.filter(function (item) {
+      return !queueIsFinished(item);
+    });
+    renderQueue();
+  }
+
+  function queueStart() {
+    if (state.queue.running) return;
+    if (!state.queue.items.some(queueIsPending)) return;
+    state.queue.running = true;
+    state.queue.halt = false;
+    queueSyncControls();
+    queueNext();
+  }
+
+  function queueStop() {
+    state.queue.halt = true;
+    if (state.queue.current) queueCancelItem(state.queue.current);
+    queueDrain();
+  }
+
+  function queueNext() {
+    if (state.queue.halt) {
+      queueDrain();
+      return;
+    }
+    var next = null;
+    for (var i = 0; i < state.queue.items.length; i++) {
+      if (queueIsPending(state.queue.items[i])) {
+        next = state.queue.items[i];
+        break;
+      }
+    }
+    if (!next) {
+      queueDrain();
+      return;
+    }
+    processQueueItem(next).then(queueNext, queueNext);
+  }
+
+  function queueDrain() {
+    var wasRunning = state.queue.running;
+    state.queue.running = false;
+    state.queue.halt = false;
+    state.queue.current = null;
+    queueSyncControls();
+    loadHealth();
+    if (!wasRunning) return;
+    var done = 0;
+    var failed = 0;
+    state.queue.items.forEach(function (item) {
+      if (item.status === "done" || item.status === "duplicate") done += 1;
+      else if (item.status === "failed") failed += 1;
+    });
+    if (done || failed) {
+      toast("队列结束：成功 " + done + " · 失败 " + failed, failed ? "warn" : "ok");
+    }
+  }
+
+  function uploadFileWithProgress(item) {
+    return new Promise(function (resolve, reject) {
+      var form = new FormData();
+      form.append("file", item.file, item.name);
+      var xhr = new XMLHttpRequest();
+      item.xhr = xhr;
+      xhr.open("POST", "/api/ui/ingest/file");
+      xhr.upload.onprogress = function (event) {
+        if (!event.lengthComputable) return;
+        item.percent = (event.loaded / event.total) * 100;
+        paintQueueItem(item);
+      };
+      xhr.onload = function () {
+        item.xhr = null;
+        var payload = null;
+        try {
+          payload = JSON.parse(xhr.responseText);
+        } catch (error) {
+          payload = null;
         }
-        setProgress(progress, label);
-
-        if (job.duplicate) $("ingest-duplicate").hidden = false;
-
-        if (job.stage === "FAILED") {
-          var errorNode = $("ingest-error");
-          errorNode.hidden = false;
-          errorNode.textContent = "失败原因：" + text(job.error_message, "未知错误");
-          linkPaper(job.paper_id, job);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload || {});
           return;
         }
-        if (job.stage === "COMPLETED") {
-          linkPaper(job.paper_id, job);
-          toast("导入完成：" + text(job.paper_id, jobId), "ok");
+        var detail = payload && payload.detail ? JSON.stringify(payload.detail) : "";
+        reject(new Error("HTTP " + xhr.status + (detail ? "：" + detail : "")));
+      };
+      xhr.onerror = function () {
+        item.xhr = null;
+        reject(new Error("网络错误（上传失败）"));
+      };
+      xhr.onabort = function () {
+        var error = new Error("已取消");
+        error.aborted = true;
+        reject(error);
+      };
+      xhr.send(form);
+    });
+  }
+
+  function pollQueueItem(item) {
+    return new Promise(function (resolve) {
+      function tick() {
+        if (state.queue.halt) {
+          resolve(null);
           return;
         }
-        state.jobPollTimer = window.setTimeout(function () {
-          pollJob(jobId);
-        }, JOB_POLL_MS);
+        api("/api/ui/jobs/" + encodeURIComponent(item.jobId))
+          .then(function (job) {
+            item.retries = 0;
+            var progress = typeof job.progress === "number" ? job.progress : 0;
+            if (job.paper_id) item.paperId = job.paper_id;
+
+            if (job.stage === "FAILED") {
+              item.status = "failed";
+              item.percent = progress;
+              item.label = "失败";
+              item.error = text(job.error_message, "未知错误");
+              paintQueueItem(item);
+              queueSyncControls();
+              loadHealth();
+              resolve(null);
+              return;
+            }
+            if (job.stage === "COMPLETED") {
+              item.status = job.duplicate ? "duplicate" : "done";
+              item.percent = 100;
+              item.label = job.duplicate ? "重复论文（已存在）" : "已完成";
+              paintQueueItem(item);
+              queueSyncControls();
+              loadHealth();
+              resolve(null);
+              return;
+            }
+            item.status = "processing";
+            item.percent = progress;
+            item.label = stageLabel(job.stage) + "（" + (stageIndex(job.stage) + 1) + "/" + STAGES.length + "）" +
+              (job.duplicate ? " · 重复" : "");
+            paintQueueItem(item);
+            item.timer = window.setTimeout(tick, QUEUE_POLL_MS);
+          })
+          .catch(function (error) {
+            item.retries += 1;
+            if (item.retries > QUEUE_MAX_RETRY) {
+              item.status = "failed";
+              item.label = "失败";
+              item.error = "查询任务失败：" + error.message;
+              paintQueueItem(item);
+              queueSyncControls();
+              resolve(null);
+              return;
+            }
+            item.timer = window.setTimeout(tick, QUEUE_POLL_MS);
+          });
+      }
+      tick();
+    });
+  }
+
+  function processQueueItem(item) {
+    state.queue.current = item;
+    item.error = null;
+    var submitted;
+
+    if (item.kind === "file") {
+      item.status = "uploading";
+      item.percent = 0;
+      item.label = "上传中…";
+      paintQueueItem(item);
+      submitted = uploadFileWithProgress(item);
+    } else {
+      item.status = "submitted";
+      item.percent = 0;
+      item.label = "提交链接中…";
+      paintQueueItem(item);
+      submitted = api("/api/ui/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_type: "url", source: item.url })
+      });
+    }
+
+    return submitted
+      .then(function (data) {
+        if (state.queue.halt) {
+          queueMarkCanceled(item);
+          return null;
+        }
+        var jobId = data && data.job_id ? data.job_id : null;
+        if (!jobId) throw new Error("后端未返回 job_id");
+        item.jobId = jobId;
+        item.status = "submitted";
+        item.percent = 100;
+        item.label = "已提交（job " + String(jobId).slice(0, 8) + "）";
+        paintQueueItem(item);
+        return pollQueueItem(item);
       })
       .catch(function (error) {
-        var errorNode = $("ingest-error");
-        errorNode.hidden = false;
-        errorNode.textContent = "查询任务失败：" + error.message;
-        state.jobPollTimer = window.setTimeout(function () {
-          pollJob(jobId);
-        }, JOB_POLL_MS);
+        if (state.queue.halt || (error && error.aborted)) {
+          queueMarkCanceled(item);
+          return null;
+        }
+        item.status = "failed";
+        item.label = "失败";
+        item.error = error.message;
+        paintQueueItem(item);
+        queueSyncControls();
+        return null;
       });
   }
 
-  function linkPaper(paperId, job) {
-    if (!paperId) return;
-    var node = $("ingest-paper-link");
-    node.hidden = false;
-    clear(node);
-    node.appendChild(document.createTextNode("论文："));
-    var link = el("button", "link-title", (job && job.duplicate ? "（重复论文）" : "") + paperId);
-    link.type = "button";
-    link.addEventListener("click", function () {
-      openDetail(paperId);
+  /* 拖拽：支持文件夹（webkitGetAsEntry），readEntries 必须读到空为止（每次最多返回 100 项） */
+
+  function walkDropEntry(entry) {
+    return new Promise(function (resolve) {
+      if (!entry) {
+        resolve([]);
+        return;
+      }
+      if (entry.isFile) {
+        entry.file(function (file) {
+          resolve([file]);
+        }, function () {
+          resolve([]);
+        });
+        return;
+      }
+      var reader = entry.createReader();
+      var acc = [];
+      function readBatch() {
+        reader.readEntries(function (batch) {
+          if (!batch.length) {
+            Promise.all(acc.map(walkDropEntry)).then(function (lists) {
+              var flat = [];
+              lists.forEach(function (list) {
+                flat = flat.concat(list);
+              });
+              resolve(flat);
+            });
+            return;
+          }
+          acc = acc.concat(Array.prototype.slice.call(batch));
+          readBatch();
+        }, function () {
+          resolve([]);
+        });
+      }
+      readBatch();
     });
-    node.appendChild(link);
+  }
+
+  function collectDroppedFiles(dataTransfer) {
+    var entries = [];
+    var items = dataTransfer && dataTransfer.items;
+    if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+      for (var i = 0; i < items.length; i++) {
+        var entry = items[i].webkitGetAsEntry();
+        if (entry) entries.push(entry);
+      }
+      if (entries.length) {
+        return Promise.all(entries.map(walkDropEntry)).then(function (lists) {
+          var flat = [];
+          lists.forEach(function (list) {
+            flat = flat.concat(list);
+          });
+          return flat;
+        });
+      }
+    }
+    return Promise.resolve(Array.prototype.slice.call((dataTransfer && dataTransfer.files) || []));
   }
 
   function submitIngestUrl(event) {
@@ -736,47 +1209,7 @@
       toast("请输入 PDF 链接", "warn");
       return;
     }
-    api("/api/ui/ingest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_type: "url", source: url })
-    })
-      .then(function (data) {
-        var jobId = data && data.job_id ? data.job_id : null;
-        if (!jobId) {
-          toast("后端未返回 job_id", "warn");
-          return;
-        }
-        showProgress(jobId);
-        pollJob(jobId);
-      })
-      .catch(function (error) {
-        toast("提交失败：" + error.message, "error");
-      });
-  }
-
-  function submitIngestFile(event) {
-    event.preventDefault();
-    var input = $("ingest-file");
-    if (!input.files || !input.files.length) {
-      toast("请选择 PDF 文件", "warn");
-      return;
-    }
-    var form = new FormData();
-    form.append("file", input.files[0]);
-    api("/api/ui/ingest/file", { method: "POST", body: form })
-      .then(function (data) {
-        var jobId = data && data.job_id ? data.job_id : null;
-        if (!jobId) {
-          toast("后端未返回 job_id", "warn");
-          return;
-        }
-        showProgress(jobId);
-        pollJob(jobId);
-      })
-      .catch(function (error) {
-        toast("上传失败：" + error.message, "error");
-      });
+    if (queueAddUrl(url)) $("ingest-url").value = "";
   }
 
   /* ---------------- Tab 4：任务 ---------------- */
@@ -874,7 +1307,36 @@
     });
 
     $("ingest-url-form").addEventListener("submit", submitIngestUrl);
-    $("ingest-file-form").addEventListener("submit", submitIngestFile);
+
+    $("btn-queue-pick").addEventListener("click", function () {
+      $("queue-file-input").click();
+    });
+    $("queue-file-input").addEventListener("change", function (event) {
+      queueAddFiles(event.target.files);
+      event.target.value = "";        // 清空，便于再次选中同一批文件
+    });
+    $("btn-queue-start").addEventListener("click", queueStart);
+    $("btn-queue-stop").addEventListener("click", queueStop);
+    $("btn-queue-clear").addEventListener("click", queueClearFinished);
+
+    var dropzone = $("queue-dropzone");
+    ["dragenter", "dragover"].forEach(function (name) {
+      dropzone.addEventListener(name, function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.add("is-drag");
+      });
+    });
+    ["dragleave", "dragend", "drop"].forEach(function (name) {
+      dropzone.addEventListener(name, function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.remove("is-drag");
+      });
+    });
+    dropzone.addEventListener("drop", function (event) {
+      collectDroppedFiles(event.dataTransfer).then(queueAddFiles);
+    });
 
     $("jobs-form").addEventListener("submit", function (event) {
       event.preventDefault();

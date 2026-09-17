@@ -744,3 +744,128 @@ code {
     margin-top: 6px;
   }
 }
+
+/* ---------------- Tab 3：上传队列 ---------------- */
+
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  padding: 16px;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropzone.is-drag {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dropzone-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.queue-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.queue-item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  background: var(--bg-elevated);
+}
+
+.queue-item.queue-uploading,
+.queue-item.queue-submitted,
+.queue-item.queue-processing {
+  border-left-color: var(--accent);
+}
+
+.queue-item.queue-done {
+  border-left-color: var(--ok);
+}
+
+.queue-item.queue-duplicate {
+  border-left-color: var(--warn);
+}
+
+.queue-item.queue-failed {
+  border-left-color: var(--error);
+}
+
+.queue-item.queue-canceled {
+  opacity: 0.65;
+}
+
+.queue-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.queue-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.queue-item-size {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.queue-item-chip {
+  white-space: nowrap;
+}
+
+.queue-item-actions {
+  white-space: nowrap;
+}
+
+.queue-item-bar {
+  height: 6px;
+}
+
+.queue-item-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+  font-size: 12px;
+  min-height: 18px;
+  flex-wrap: wrap;
+}
+
+.queue-item-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

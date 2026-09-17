@@ -138,7 +138,7 @@
         </div>
       </section>
 
-      <!-- Tab 3: 导入 -->
+      <!-- Tab 3: 导入（多选 + 上传队列） -->
       <section class="panel" id="panel-ingest" role="tabpanel">
         <form class="card" id="ingest-url-form">
           <h2>通过 URL 导入</h2>
@@ -147,34 +147,34 @@
             <input type="url" id="ingest-url" placeholder="https://arxiv.org/pdf/1706.03762" autocomplete="off" />
           </label>
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary">提交导入</button>
+            <button type="submit" class="btn btn-primary">加入队列</button>
           </div>
         </form>
 
-        <form class="card" id="ingest-file-form">
-          <h2>上传本地 PDF</h2>
-          <label class="field field-wide">
-            <span>选择文件</span>
-            <input type="file" id="ingest-file" accept="application/pdf,.pdf" />
-          </label>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary">上传并导入</button>
-          </div>
-        </form>
+        <div class="card" id="queue-card">
+          <h2>上传队列 <span class="muted" id="queue-summary">（空）</span></h2>
 
-        <div class="card" id="ingest-progress-card" hidden>
-          <h2>导入进度</h2>
-          <div class="progress-meta">
-            <span>job_id：<code id="ingest-job-id">-</code></span>
-            <span id="ingest-stage-label">等待中…</span>
+          <div class="dropzone" id="queue-dropzone">
+            <div class="dropzone-main">
+              <button type="button" class="btn btn-primary" id="btn-queue-pick">选择 PDF（可多选）</button>
+              <span class="muted">或把文件 / 文件夹拖到这里</span>
+            </div>
+            <p class="muted dropzone-hint">
+              一次可加入多个 PDF，队列逐个上传（同一时间只跑一个），避免打满后端的解析 / 向量化流水线；
+              单文件上限 100MB。随时可「取消」当前项或「停止」整队。
+            </p>
+            <input type="file" id="queue-file-input" accept="application/pdf,.pdf" multiple hidden />
           </div>
-          <div class="progress-bar" id="ingest-progress-bar"><span id="ingest-progress-fill"></span></div>
-          <div class="progress-detail">
-            <span id="ingest-progress-pct">0%</span>
-            <span id="ingest-duplicate" hidden>重复论文（已存在）</span>
+
+          <div class="queue-actions">
+            <button type="button" class="btn btn-primary" id="btn-queue-start" disabled>开始上传</button>
+            <button type="button" class="btn btn-ghost" id="btn-queue-stop" hidden>停止</button>
+            <button type="button" class="btn btn-ghost" id="btn-queue-clear" disabled>清空已完成</button>
+            <label class="check"><input type="checkbox" id="queue-autostart" checked /> 加入后自动开始</label>
           </div>
-          <p class="error-text" id="ingest-error" hidden></p>
-          <p id="ingest-paper-link" hidden></p>
+
+          <ul class="queue-list" id="queue-list"></ul>
+          <p class="empty" id="queue-empty">队列为空：选择 PDF 或提交 URL 后，任务会排在这里。</p>
         </div>
       </section>
 
