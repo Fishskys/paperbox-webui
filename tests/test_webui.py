@@ -429,3 +429,40 @@ def test_index_serves_html_shell() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
+
+
+def test_index_shell_exposes_the_multi_select_upload_queue() -> None:
+    """The ingest tab must offer a multi-select input plus the queue controls."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    html = client.get("/").text
+
+    assert 'id="queue-file-input"' in html
+    assert "multiple" in html.split('id="queue-file-input"')[1].split(">")[0]
+    for marker in ("queue-list", "queue-summary", "btn-queue-start", "btn-queue-stop",
+                   "btn-queue-clear", "queue-autostart", "queue-dropzone"):
+        assert f'id="{marker}"' in html, marker
+    # 单文件表单已被队列取代
+    assert 'id="ingest-file-form"' not in html
+    assert 'id="ingest-file"' not in html
+
+
+def test_app_js_is_served_and_implements_the_queue() -> None:
+    """Guard the static asset: queue helpers must survive future refactors."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    for symbol in ("queueAddFiles", "queueStart", "queueStop", "processQueueItem",
+                   "uploadFileWithProgress", "collectDroppedFiles", "pollQueueItem"):
+        assert symbol in body, symbol
+    # 上传进度依赖 XHR（fetch 拿不到 upload 进度）
+    assert "xhr.upload.onprogress" in body
