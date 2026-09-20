@@ -740,6 +740,22 @@ def test_app_js_uses_the_concurrent_queue() -> None:
     assert "/api/ui/ingest/file\"" not in body, "the legacy single-file endpoint is no longer used"
 
 
+def test_app_js_reports_two_phase_progress_and_queued() -> None:
+    """The queue summary is now `上传 x/y · 处理 a/b`, and QUEUED has a label."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    assert 'id="queue-hint"' in html
+    for symbol in ("QUEUED", "排队中", "summarizeProgress", "queueSyncHint",
+                   "queueSyncBacklog", "/api/ui/jobs/queue", "服务端排队", "排队退避"):
+        assert symbol in body, symbol
+
+
 def test_index_loads_the_queue_logic_before_app_js() -> None:
     """``app.js`` reads ``window.PaperboxQueue`` at call time, but keep the order."""
 

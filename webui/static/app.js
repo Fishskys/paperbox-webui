@@ -13,6 +13,7 @@
 
   var STAGES = [
     "RECEIVED",
+    "QUEUED",
     "DOWNLOADING",
     "STORED",
     "PARSING",
@@ -23,6 +24,7 @@
   ];
   var STAGE_LABELS = {
     RECEIVED: "已接收",
+    QUEUED: "排队中",
     DOWNLOADING: "下载中",
     STORED: "已存储",
     PARSING: "解析中",
@@ -37,6 +39,7 @@
     library: { offset: 0, total: 0, loading: false },
     jobsAutoTimer: null,
     config: null,
+    serverQueued: null,     // paperbox 侧的排队深度（/api/ui/jobs/queue 的 queued）
     queue: {
       items: [],
       seq: 0,
@@ -44,7 +47,8 @@
       halt: false,
       inflight: [],      // 在途上传请求（并发池），最多 queueConcurrency() 个
       wakeTimer: null,   // 退避到点后补位的定时器
-      ticker: null       // 退避倒计时的刷新定时器
+      ticker: null,      // 退避倒计时的刷新定时器
+      backlogTimer: null // 服务端排队深度的轮询定时器
     }
   };
 
@@ -771,24 +775,17 @@
     return null;
   }
 
+  /* 两阶段摘要（决策 #5）：`共 N 项 · 上传 x/y · 处理 a/b · 失败 f [· 服务端排队 q]`。
+   * 计数规则在 queue-logic.js 的 summarizeProgress()，由 node:test 覆盖。 */
   function queueSummaryText() {
     var items = state.queue.items;
     if (!items.length) return "（空）";
-    var counts = { pending: 0, running: 0, done: 0, duplicate: 0, failed: 0, canceled: 0 };
-    items.forEach(function (item) {
-      if (queueIsPending(item)) counts.pending += 1;
-      else if (queueIsActive(item)) counts.running += 1;
-      else if (item.status === "done") counts.done += 1;
-      else if (item.status === "duplicate") counts.duplicate += 1;
-      else if (item.status === "failed") counts.failed += 1;
-      else counts.canceled += 1;
-    });
-    var parts = ["共 " + items.length + " 项"];
-    if (counts.running) parts.push("进行中 " + counts.running);
-    if (counts.pending) parts.push("待上传 " + counts.pending);
-    if (counts.done) parts.push("完成 " + counts.done);
-    if (counts.duplicate) parts.push("重复 " + counts.duplicate);
-    if (counts.failed) parts.push("失败 " + counts.failed);
+    var summary = QL.summarizeProgress(items);
+    var parts = ["共 " + summary.total + " 项"];
+    if (summary.toUpload) parts.push("上传 " + summary.uploaded + "/" + summary.toUpload);
+    if (summary.submitted) parts.push("处理 " + summary.terminal + "/" + summary.submitted);
+    if (summary.failed) parts.push("失败 " + summary.failed);
+    if (state.serverQueued) parts.push("服务端排队 " + state.serverQueued);
     return "（" + parts.join(" · ") + "）";
   }
 
@@ -815,6 +812,61 @@
     }
   }
 
+  var QUEUE_BACKLOG_MS = 2000;   // 服务端排队深度：与作业轮询同频
+
+  function queueHasLiveJobs() {
+    return state.queue.items.some(function (item) {
+      return item.jobId && !item.jobDone;
+    });
+  }
+
+  /* 只在有在途作业时轮询 /api/ui/jobs/queue，用来解释"为什么我的作业还没开始"。 */
+  function loadServerQueue() {
+    if (!queueHasLiveJobs()) {
+      if (state.serverQueued !== null) {
+        state.serverQueued = null;
+        queuePaintSummary();
+      }
+      return;
+    }
+    api("/api/ui/jobs/queue")
+      .then(function (data) {
+        state.serverQueued = data && typeof data.queued === "number" ? data.queued : null;
+        queuePaintSummary();
+      })
+      .catch(function () {
+        state.serverQueued = null;   // paperbox 不可达时静默忽略
+      });
+  }
+
+  function queueSyncBacklog() {
+    var live = queueHasLiveJobs();
+    if (live && !state.queue.backlogTimer) {
+      state.queue.backlogTimer = window.setInterval(loadServerQueue, QUEUE_BACKLOG_MS);
+      loadServerQueue();
+    } else if (!live && state.queue.backlogTimer) {
+      window.clearInterval(state.queue.backlogTimer);
+      state.queue.backlogTimer = null;
+      state.serverQueued = null;
+    }
+  }
+
+  /* 队列很长时提示走服务端目录导入（决策 #6：不自动改成多文件请求）。 */
+  function queueSyncHint() {
+    var hint = $("queue-hint");
+    if (!hint) return;
+    var suggest = QL.shouldSuggestServerSide(
+      state.queue.items.length,
+      queueConfig().batch_hint_threshold
+    );
+    hint.hidden = !suggest;
+    if (suggest) {
+      hint.textContent =
+        "队列已有 " + state.queue.items.length + " 项：上千个文件建议改用 /ingest/dir" +
+        "（同机零传输，不必经过浏览器逐文件上传）。";
+    }
+  }
+
   function queueSyncControls() {
     var items = state.queue.items;
     var hasPending = items.some(queueIsPending);
@@ -827,6 +879,8 @@
     $("btn-queue-stop").hidden = !state.queue.running;
     $("btn-queue-clear").disabled = !hasFinished;
     queueEnsureTicker();
+    queueSyncBacklog();
+    queueSyncHint();
   }
 
   function queueItemLabel(item) {
