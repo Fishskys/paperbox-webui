@@ -171,6 +171,10 @@ class PaperboxClient:
     async def get_job(self, job_id: str) -> PaperboxResponse:
         return await self._request("GET", f"/api/jobs/{job_id}")
 
+    async def job_queue(self) -> PaperboxResponse:
+        """In-process ingestion queue depth (``GET /api/jobs/queue``)."""
+        return await self._request("GET", "/api/jobs/queue")
+
     async def ingest_url(self, url: str) -> PaperboxResponse:
         return await self._request(
             "POST",

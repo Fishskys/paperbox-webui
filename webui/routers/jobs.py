@@ -26,6 +26,20 @@ async def list_jobs(
     return _json(response)
 
 
+@router.get("/jobs/queue")
+async def job_queue(client: PaperboxClient = Depends(get_client)) -> JSONResponse:
+    """Server-side backlog depth.
+
+    Declared *before* ``/jobs/{job_id}``: otherwise the path parameter swallows
+    ``queue`` (paperbox itself hit the same trap).
+    """
+    try:
+        response = await client.job_queue()
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, client: PaperboxClient = Depends(get_client)) -> JSONResponse:
     try:

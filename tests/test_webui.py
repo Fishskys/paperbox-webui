@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, UploadFile
 
 from webui.client import PaperboxClient
-from webui.config import Settings
+from webui.config import Settings, get_settings
 from webui.main import create_app
 from webui.routers import ingest as ingest_routes
 
@@ -533,6 +533,81 @@ def test_delete_action_reports_success_without_body() -> None:
         assert response.json().get("ok") is True
     assert seen[0].method == "DELETE"
     assert seen[0].url.path == "/api/papers/p1"
+
+
+def test_jobs_queue_is_not_swallowed_by_the_job_id_route() -> None:
+    """``/jobs/queue`` must be declared before ``/jobs/{job_id}``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(
+            {
+                "started": True,
+                "concurrency": 1,
+                "running": 1,
+                "queued": 3,
+                "queued_high": 2,
+                "queued_low": 1,
+                "running_job_ids": ["j1"],
+                "queued_job_ids": ["j2", "j3", "j4"],
+            }
+        )
+
+    client, seen = build_app(handler)
+    response = client.get("/api/ui/jobs/queue")
+
+    assert response.status_code == 200
+    assert response.json()["queued"] == 3
+    assert seen[0].url.path == "/api/jobs/queue", "the {job_id} route ate the queue path"
+
+
+# --------------------------------------------------------------------------- #
+# /api/ui/config
+# --------------------------------------------------------------------------- #
+
+
+def test_ui_config_exposes_the_upload_tuning() -> None:
+    """The frontend must not hardcode concurrency, retries or the file cap."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("config is served locally")
+
+    client, seen = build_app(handler)
+    response = client.get("/api/ui/config")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "upload_concurrency": 2,
+        "upload_max_attempts": 6,
+        "retry_base_ms": 2000,
+        "retry_cap_ms": 60000,
+        "file_max_mb": 100,
+        "batch_hint_threshold": 20,
+    }
+    assert seen == [], "config must not hit paperbox"
+
+
+def test_ui_config_follows_settings() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("config is served locally")
+
+    client, _ = build_app(handler)
+    client.app.dependency_overrides[get_settings] = lambda: Settings(
+        webui_upload_concurrency=4,
+        webui_upload_max_attempts=9,
+        webui_retry_base_ms=500,
+        webui_retry_cap_ms=1000,
+        webui_file_max_mb=7,
+        webui_batch_hint_threshold=3,
+    )
+
+    assert client.get("/api/ui/config").json() == {
+        "upload_concurrency": 4,
+        "upload_max_attempts": 9,
+        "retry_base_ms": 500,
+        "retry_cap_ms": 1000,
+        "file_max_mb": 7,
+        "batch_hint_threshold": 3,
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     webui_port: int = 8088
     request_timeout: float = 30.0
 
+    # Upload queue tuning, handed to the browser by ``GET /api/ui/config`` so the
+    # frontend never hardcodes it. Keep ``webui_upload_concurrency`` <= paperbox's
+    # ``INGEST_UPLOAD_CONCURRENCY`` (both default to 2): anything above it only
+    # earns 429s, which the queue can survive but at the cost of waiting.
+    webui_upload_concurrency: int = 2
+    webui_upload_max_attempts: int = 6
+    webui_retry_base_ms: int = 2000
+    webui_retry_cap_ms: int = 60000
+    webui_file_max_mb: int = 100
+    webui_batch_hint_threshold: int = 20
+
     @property
     def ingest_timeout(self) -> float:
         """Ingestion is slower than the regular calls (SPEC 3: 60s)."""

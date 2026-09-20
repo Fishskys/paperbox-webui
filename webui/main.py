@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .client import PaperboxClient
 from .config import STATIC_DIR, get_settings
 from .routers import actions, ingest, jobs, papers, search, system
+from .routers import config as config_router
 
 INDEX_FILE = STATIC_DIR / "index.html"
 
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="paperbox WebUI", version="0.1.0", lifespan=lifespan)
 
-    for module in (system, papers, jobs, ingest, search, actions):
+    for module in (system, config_router, papers, jobs, ingest, search, actions):
         app.include_router(module.router, prefix="/api/ui", tags=[module.__name__.rsplit(".", 1)[-1]])
 
     @app.get("/", response_class=HTMLResponse)
