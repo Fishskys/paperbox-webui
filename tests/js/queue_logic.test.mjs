@@ -123,6 +123,19 @@ test("summarizeProgress separates an upload failure from a job failure", () => {
   assert.equal(summary.terminal, 1);
 });
 
+test("summarizeProgress never reports more uploads than needed", () => {
+  // 真机验收里出现过 上传 7/4：已提交的项随后被取消，被算进 uploaded 却从 toUpload 里消失
+  const items = [
+    { kind: "file", status: "canceled", jobId: "j1", jobDone: false },
+    { kind: "file", status: "canceled", jobId: null },
+    { kind: "file", status: "pending", jobId: null }
+  ];
+  const summary = queue.summarizeProgress(items);
+  assert.equal(summary.toUpload, 2, "the canceled one that was uploaded still had to be uploaded");
+  assert.equal(summary.uploaded, 1);
+  assert.ok(summary.uploaded <= summary.toUpload);
+});
+
 /* ---------------- uploadSlots ---------------- */
 
 test("uploadSlots hands out at most `slots` pending items", () => {

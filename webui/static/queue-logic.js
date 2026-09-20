@@ -75,7 +75,8 @@
       if (item.jobId) summary.submitted += 1;
       if (item.jobDone === true) summary.terminal += 1;
       if (item.kind === "file") {
-        if (item.status !== "canceled") summary.toUpload += 1;
+        // 已提交后被取消的文件仍然算"需上传"（它确实上传过），否则会出现 上传 7/4 这种倒挂
+        if (item.status !== "canceled" || item.jobId) summary.toUpload += 1;
         if (item.jobId) summary.uploaded += 1;
       }
     });

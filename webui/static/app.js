@@ -815,6 +815,7 @@
   var QUEUE_BACKLOG_MS = 2000;   // 服务端排队深度：与作业轮询同频
 
   function queueHasLiveJobs() {
+    if (state.queue.halt) return false;   // 停止后不再跟踪：作业仍在 paperbox 里跑
     return state.queue.items.some(function (item) {
       return item.jobId && !item.jobDone;
     });
