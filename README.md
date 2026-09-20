@@ -132,9 +132,12 @@ node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍
 原文流式下载、首页 HTML，以及静态资源守卫（多选上传队列的 DOM 结构、`app.js` 里的队列实现与
 新端点、`queue-logic.js` 的加载顺序与导出）。
 
-`tests/js/queue_logic.test.mjs` 是 13 个 `node:test` 用例，覆盖 `parseRetryAfter`、
+`tests/js/queue_logic.test.mjs` 是 14 个 `node:test` 用例，覆盖 `parseRetryAfter`、
 `retryDelayMs`（Retry-After 优先 / 指数增长 / 抖动范围 / 上限）、`summarizeProgress`、
 `uploadSlots`、`shouldSuggestServerSide`。
+
+真机验收（并发在途数、429 退避、两阶段进度、`QUEUED`、停止语义、收尾基线）的实测输出见
+[`docs/acceptance-upload.md`](docs/acceptance-upload.md)。
 
 ## 6. 目录
 
