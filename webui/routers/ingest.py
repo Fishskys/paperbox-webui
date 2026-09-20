@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..client import PaperboxClient, PaperboxUnreachable
-from .deps import get_client, passthrough, unreachable
+from .deps import forward_headers, get_client, passthrough, unreachable
 
 router = APIRouter()
 
@@ -67,5 +67,9 @@ async def ingest_file(
 
 def _json(response) -> JSONResponse:
     if response.ok:
-        return JSONResponse(status_code=response.status_code, content=response.json())
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json(),
+            headers=forward_headers(response),
+        )
     return passthrough(response)

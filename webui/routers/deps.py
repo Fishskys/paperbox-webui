@@ -18,12 +18,30 @@ def get_client(request: Request) -> PaperboxClient:
     return client
 
 
+def forward_headers(response: PaperboxResponse) -> dict[str, str]:
+    """Relay the paperbox response headers the browser actually needs.
+
+    Only ``Retry-After`` today: paperbox answers a too-many-uploads request with
+    ``429 + Retry-After: <seconds>``, and a proxy that drops the header turns
+    "slow down" into a plain failure -- the upload queue then has nothing to back
+    off on.
+    """
+    retry_after = response.headers.get("retry-after")
+    if retry_after:
+        return {"Retry-After": retry_after}
+    return {}
+
+
 def passthrough(response: PaperboxResponse) -> JSONResponse:
     """Relay a paperbox error body and status code to the browser unchanged."""
     payload = response.json()
     if payload is None:
         payload = {"detail": response.content.decode("utf-8", "replace") or "paperbox error"}
-    return JSONResponse(status_code=response.status_code, content=payload)
+    return JSONResponse(
+        status_code=response.status_code,
+        content=payload,
+        headers=forward_headers(response),
+    )
 
 
 def unreachable(exc: PaperboxUnreachable) -> JSONResponse:

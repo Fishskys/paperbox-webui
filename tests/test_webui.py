@@ -416,6 +416,64 @@ def test_delete_action_reports_success_without_body() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Retry-After passthrough (the upload queue can only back off if it arrives)
+# --------------------------------------------------------------------------- #
+
+
+def test_retry_after_is_forwarded_with_the_429() -> None:
+    """A 429 from paperbox must keep its Retry-After header through the proxy."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": "server busy: uploads in flight; retry after 2s"},
+            headers={"Retry-After": "2"},
+        )
+
+    client, seen = build_app(handler)
+    response = client.post(
+        "/api/ui/ingest/file",
+        files={"file": ("a.pdf", b"%PDF-1.5 a", "application/pdf")},
+    )
+
+    assert seen[0].url.path == "/api/papers/ingest/file"
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "2"
+    assert "server busy" in response.json()["detail"]
+
+
+def test_retry_after_is_forwarded_by_the_json_routers() -> None:
+    """jobs / papers / search share the same relay helper as ingest."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"detail": "busy"}, headers={"Retry-After": "7"})
+
+    client, _ = build_app(handler)
+    responses = [
+        client.get("/api/ui/jobs/j1"),
+        client.get("/api/ui/papers"),
+        client.post("/api/ui/search", json={"query": "attention"}),
+    ]
+    for response in responses:
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == "7"
+
+
+def test_no_retry_after_header_without_one_upstream() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"detail": "boom"})
+
+    client, _ = build_app(handler)
+    response = client.post(
+        "/api/ui/ingest/file",
+        files={"file": ("a.pdf", b"%PDF-1.5 a", "application/pdf")},
+    )
+
+    assert response.status_code == 500
+    assert "retry-after" not in response.headers
+
+
+# --------------------------------------------------------------------------- #
 # index shell
 # --------------------------------------------------------------------------- #
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from ..client import PaperboxClient, PaperboxUnreachable
-from .deps import get_client, passthrough, unreachable
+from .deps import forward_headers, get_client, passthrough, unreachable
 
 router = APIRouter()
 
@@ -37,6 +37,14 @@ def _json(response) -> JSONResponse:
     if response.ok:
         content = response.json()
         if content is None:
-            return JSONResponse(status_code=response.status_code, content={"ok": True})
-        return JSONResponse(status_code=response.status_code, content=content)
+            return JSONResponse(
+                status_code=response.status_code,
+                content={"ok": True},
+                headers=forward_headers(response),
+            )
+        return JSONResponse(
+            status_code=response.status_code,
+            content=content,
+            headers=forward_headers(response),
+        )
     return passthrough(response)
