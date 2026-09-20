@@ -160,8 +160,9 @@
               <span class="muted">或把文件 / 文件夹拖到这里</span>
             </div>
             <p class="muted dropzone-hint">
-              一次可加入多个 PDF，队列逐个上传（同一时间只跑一个），避免打满后端的解析 / 向量化流水线；
-              单文件上限 100MB。随时可「取消」当前项或「停止」整队。
+              一次可加入多个 PDF，队列最多同时上传 2 个（并发数由后端下发，见 WEBUI_UPLOAD_CONCURRENCY）；
+              服务端忙时会按 Retry-After 自动退避重试，不会当成失败。单文件上限 100MB。
+              随时可「取消」单项或「停止」整队——停止只中止在途上传，已提交的作业会在 paperbox 里跑完。
             </p>
             <input type="file" id="queue-file-input" accept="application/pdf,.pdf" multiple hidden />
           </div>
@@ -223,6 +224,7 @@
 
     <div class="toast-stack" id="toast-stack"></div>
 
+    <script src="/static/queue-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

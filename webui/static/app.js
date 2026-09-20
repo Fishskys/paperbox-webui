@@ -2,6 +2,10 @@
 (function () {
   "use strict";
 
+  /* 队列的纯逻辑在 queue-logic.js（index.html 里先于本文件加载），
+   * 并发 / 退避 / 两阶段计数的规则在那里，并被 node:test 真测。 */
+  var QL = window.PaperboxQueue;
+
   var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
   var JOBS_AUTO_MS = 5000;
@@ -32,7 +36,16 @@
   var state = {
     library: { offset: 0, total: 0, loading: false },
     jobsAutoTimer: null,
-    queue: { items: [], seq: 0, running: false, halt: false, current: null }
+    config: null,
+    queue: {
+      items: [],
+      seq: 0,
+      running: false,
+      halt: false,
+      inflight: [],      // 在途上传请求（并发池），最多 queueConcurrency() 个
+      wakeTimer: null,   // 退避到点后补位的定时器
+      ticker: null       // 退避倒计时的刷新定时器
+    }
   };
 
   function $(id) {
@@ -660,7 +673,43 @@
 
   var QUEUE_POLL_MS = 2000;      // 队列内单个任务的轮询间隔
   var QUEUE_MAX_RETRY = 15;      // 轮询连续失败上限（后端重启/网络抖动时重试，超过判定失败）
-  var FILE_MAX_MB = 100;         // 与 paperbox 侧 INGEST_MAX_FILE_MB 对齐，超限就地拦下
+  var QUEUE_TICK_MS = 500;       // 退避倒计时的刷新间隔
+
+  /* 上传调参由后端下发（GET /api/ui/config）；拿不到就用这份内置默认——
+   * 配置接口失败绝不能变成"不能上传"（决策 #2）。 */
+  var DEFAULT_CONFIG = {
+    upload_concurrency: 2,       // 与 paperbox 的 INGEST_UPLOAD_CONCURRENCY 对齐
+    upload_max_attempts: 6,      // 429 重试上限
+    retry_base_ms: 2000,
+    retry_cap_ms: 60000,
+    file_max_mb: 100,
+    batch_hint_threshold: 20
+  };
+
+  function queueConfig() {
+    var config = state.config || {};
+    var merged = {};
+    for (var key in DEFAULT_CONFIG) {
+      if (Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key)) {
+        merged[key] = typeof config[key] === "number" ? config[key] : DEFAULT_CONFIG[key];
+      }
+    }
+    return merged;
+  }
+
+  function queueConcurrency() {
+    return Math.max(1, Math.floor(queueConfig().upload_concurrency));
+  }
+
+  function loadConfig() {
+    return api("/api/ui/config")
+      .then(function (data) {
+        state.config = data && typeof data === "object" ? data : null;
+      })
+      .catch(function () {
+        state.config = null;      // 静默退回内置默认
+      });
+  }
 
   var QUEUE_CHIP = {
     pending: ["chip-pending", "待上传"],
@@ -702,7 +751,10 @@
       url: null,
       xhr: null,
       timer: null,
-      retries: 0,
+      retries: 0,       // 轮询连续失败次数
+      attempts: 0,      // 429 重试次数
+      retryAt: null,    // 退避到点的时间戳（Date.now() 基准）
+      jobDone: false,   // 作业是否已到终态（COMPLETED / FAILED）
       node: null
     };
     var extraKeys = extra || {};
@@ -740,29 +792,61 @@
     return "（" + parts.join(" · ") + "）";
   }
 
+  function queuePaintSummary() {
+    var summaryNode = $("queue-summary");
+    if (summaryNode) summaryNode.textContent = queueSummaryText();
+  }
+
+  /* 退避中的项要能看出"在等"：每 QUEUE_TICK_MS 重画一次倒计时，没人退避就停表。 */
+  function queueEnsureTicker() {
+    var waiting = state.queue.items.some(function (item) {
+      return item.status === "pending" && item.retryAt;
+    });
+    if (waiting && !state.queue.ticker) {
+      state.queue.ticker = window.setInterval(function () {
+        state.queue.items.forEach(function (item) {
+          if (item.status === "pending" && item.retryAt) paintQueueItem(item);
+        });
+        queueEnsureTicker();
+      }, QUEUE_TICK_MS);
+    } else if (!waiting && state.queue.ticker) {
+      window.clearInterval(state.queue.ticker);
+      state.queue.ticker = null;
+    }
+  }
+
   function queueSyncControls() {
     var items = state.queue.items;
     var hasPending = items.some(queueIsPending);
     var hasFinished = items.some(queueIsFinished);
-    $("queue-summary").textContent = queueSummaryText();
+    queuePaintSummary();
     $("queue-empty").hidden = items.length > 0;
     var startBtn = $("btn-queue-start");
     startBtn.disabled = state.queue.running || !hasPending;
     startBtn.textContent = state.queue.running ? "上传中…" : "开始上传";
     $("btn-queue-stop").hidden = !state.queue.running;
     $("btn-queue-clear").disabled = !hasFinished;
+    queueEnsureTicker();
   }
 
   function queueItemLabel(item) {
     if (item.status === "uploading") return "上传中 " + Math.round(item.percent) + "%";
-    if (item.status === "submitted") return item.label;
+    if (item.status === "pending" && item.retryAt) {
+      var left = Math.max(0, Math.ceil((item.retryAt - Date.now()) / 1000));
+      return "排队退避 " + left + "s";
+    }
     return item.label;
+  }
+
+  function queueChipFor(item) {
+    if (item.status === "pending" && item.retryAt) return ["chip-pending", "排队退避"];
+    return QUEUE_CHIP[item.status] || ["chip-info", item.status];
   }
 
   function paintQueueItem(item) {
     var refs = item.node;
     if (!refs) return;
-    var chip = QUEUE_CHIP[item.status] || ["chip-info", item.status];
+    var chip = queueChipFor(item);
     refs.chip.className = "chip " + chip[0] + " queue-item-chip";
     refs.chip.textContent = chip[1];
     refs.root.className = "queue-item queue-" + item.status;
@@ -791,8 +875,7 @@
       refs.link.className = "queue-item-link muted";
     }
     // 进度事件很密，这里只刷新摘要文字，按钮状态交给 queueSyncControls()
-    var summaryNode = $("queue-summary");
-    if (summaryNode) summaryNode.textContent = queueSummaryText();
+    queuePaintSummary();
   }
 
   function renderQueueItem(item) {
@@ -875,8 +958,8 @@
         rejected.push(file.name + "（非 PDF）");
         return;
       }
-      if (file.size > FILE_MAX_MB * 1024 * 1024) {
-        rejected.push(file.name + "（超过 " + FILE_MAX_MB + "MB）");
+      if (file.size > queueConfig().file_max_mb * 1024 * 1024) {
+        rejected.push(file.name + "（超过 " + queueConfig().file_max_mb + "MB）");
         return;
       }
       items.push(newQueueItem("file", file.name, file.size, { file: file }));
@@ -937,55 +1020,123 @@
     renderQueue();
   }
 
-  function queueStart() {
-    if (state.queue.running) return;
-    if (!state.queue.items.some(queueIsPending)) return;
-    state.queue.running = true;
-    state.queue.halt = false;
-    queueSyncControls();
-    queueNext();
+  function queueFreeSlots() {
+    return Math.max(0, queueConcurrency() - state.queue.inflight.length);
   }
 
-  function queueStop() {
-    state.queue.halt = true;
-    if (state.queue.current) queueCancelItem(state.queue.current);
-    queueDrain();
+  function queueNextWake() {
+    var earliest = null;
+    state.queue.items.forEach(function (item) {
+      if (item.status === "pending" && item.retryAt &&
+          (earliest === null || item.retryAt < earliest)) {
+        earliest = item.retryAt;
+      }
+    });
+    return earliest;
   }
 
-  function queueNext() {
+  /* 退避到点再回来补位；没有退避中的项就不排定时器。 */
+  function queueScheduleWake() {
+    if (state.queue.wakeTimer) {
+      window.clearTimeout(state.queue.wakeTimer);
+      state.queue.wakeTimer = null;
+    }
+    var at = queueNextWake();
+    if (at === null || !state.queue.running) return;
+    state.queue.wakeTimer = window.setTimeout(function () {
+      state.queue.wakeTimer = null;
+      queuePump();
+    }, Math.max(0, at - Date.now()) + 50);
+  }
+
+  /* 并发池：把空位一次填满（uploadSlots 只挑不排队的 pending），
+   * 每个上传请求结束都会回调 queuePump 补位（决策 #1 / #2）。 */
+  function queuePump() {
     if (state.queue.halt) {
       queueDrain();
       return;
     }
-    var next = null;
-    for (var i = 0; i < state.queue.items.length; i++) {
-      if (queueIsPending(state.queue.items[i])) {
-        next = state.queue.items[i];
-        break;
-      }
-    }
-    if (!next) {
-      queueDrain();
+    var started = QL.uploadSlots(state.queue.items, queueFreeSlots(), Date.now());
+    if (started.length) {
+      started.forEach(function (item) {
+        state.queue.inflight.push(item);
+        processQueueItem(item).then(queuePump, queuePump);
+      });
+      queueSyncControls();
       return;
     }
-    processQueueItem(next).then(queueNext, queueNext);
+    if (queueNextWake() !== null) {       // 都在退避：等最靠前的一个到点
+      queueScheduleWake();
+      queueSyncControls();
+      return;
+    }
+    if (state.queue.inflight.length) {    // 池满：等上传结束的回调
+      queueSyncControls();
+      return;
+    }
+    queueDrain();
+  }
+
+  function queueStart() {
+    if (state.queue.running) return;
+    if (!state.queue.items.some(queueIsPending)) return;
+    state.queue.halt = false;
+    state.queue.running = true;
+    state.queue.items.forEach(function (item) {   // 重新开始时退避计数归零
+      if (queueIsPending(item)) {
+        item.attempts = 0;
+        item.retryAt = null;
+      }
+    });
+    queueSyncControls();
+    queuePump();
+  }
+
+  function queueStop() {
+    state.queue.halt = true;
+    state.queue.inflight.slice().forEach(function (item) {
+      queueCancelItem(item);                      // 在途上传全部中止（不只一个）
+    });
+    state.queue.inflight = [];
+    state.queue.items.forEach(function (item) {   // 轮询 timer 也全部清掉
+      if (item.timer) {
+        window.clearTimeout(item.timer);
+        item.timer = null;
+      }
+    });
+    queueDrain();
+    toast("已停止：在途上传已中止；已提交的作业会在 paperbox 里继续跑完", "warn");
   }
 
   function queueDrain() {
     var wasRunning = state.queue.running;
     state.queue.running = false;
-    state.queue.halt = false;
-    state.queue.current = null;
+    state.queue.inflight = [];
+    if (state.queue.wakeTimer) {
+      window.clearTimeout(state.queue.wakeTimer);
+      state.queue.wakeTimer = null;
+    }
+    state.queue.items.forEach(function (item) {
+      if (queueIsPending(item)) {          // 退避标记不跨"这一轮"
+        item.retryAt = null;
+        item.label = "待上传";
+      }
+    });
     queueSyncControls();
     loadHealth();
     if (!wasRunning) return;
+
+    var summary = QL.summarizeProgress(state.queue.items);
     var done = 0;
     var failed = 0;
     state.queue.items.forEach(function (item) {
       if (item.status === "done" || item.status === "duplicate") done += 1;
       else if (item.status === "failed") failed += 1;
     });
-    if (done || failed) {
+    if (summary.submitted > summary.terminal) {
+      // 上传阶段收工，但作业还在 paperbox 里跑（轮询继续）
+      toast("上传阶段结束：已提交 " + summary.submitted + " 个作业，处理中…", "ok");
+    } else if (done || failed) {
       toast("队列结束：成功 " + done + " · 失败 " + failed, failed ? "warn" : "ok");
     }
   }
@@ -993,10 +1144,10 @@
   function uploadFileWithProgress(item) {
     return new Promise(function (resolve, reject) {
       var form = new FormData();
-      form.append("file", item.file, item.name);
+      form.append("files", item.file, item.name);       // 一个请求一个文件（决策 #1）
       var xhr = new XMLHttpRequest();
       item.xhr = xhr;
-      xhr.open("POST", "/api/ui/ingest/file");
+      xhr.open("POST", "/api/ui/ingest/files");
       xhr.upload.onprogress = function (event) {
         if (!event.lengthComputable) return;
         item.percent = (event.loaded / event.total) * 100;
@@ -1011,7 +1162,12 @@
           payload = null;
         }
         if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(payload || {});
+          resolve({ payload: payload || {} });
+          return;
+        }
+        if (xhr.status === 429) {
+          // 服务端忙：不是失败，按 Retry-After 退避后重发（重建 XHR）
+          resolve({ busy: true, retryAfter: xhr.getResponseHeader("Retry-After") });
           return;
         }
         var detail = payload && payload.detail ? JSON.stringify(payload.detail) : "";
@@ -1030,10 +1186,59 @@
     });
   }
 
+  function queueRelease(item) {
+    state.queue.inflight = state.queue.inflight.filter(function (other) {
+      return other !== item;
+    });
+  }
+
+  /* 429 之后把这项放回 pending 并标记 retryAt；到点由 queuePump 重新进池。
+   * 超过重试上限才判失败（决策 #3）。 */
+  function queueBackOff(item, retryAfterHeader) {
+    var config = queueConfig();
+    item.attempts += 1;
+    if (item.attempts > config.upload_max_attempts) {
+      item.status = "failed";
+      item.percent = 0;
+      item.retryAt = null;
+      item.label = "失败";
+      item.error = "服务端持续繁忙（429），已重试 " + config.upload_max_attempts + " 次";
+      paintQueueItem(item);
+      queueSyncControls();
+      return;
+    }
+    var delay = QL.retryDelayMs(item.attempts, retryAfterHeader, {
+      baseMs: config.retry_base_ms,
+      capMs: config.retry_cap_ms
+    });
+    item.status = "pending";
+    item.percent = 0;
+    item.retryAt = Date.now() + delay;
+    item.label = "排队退避";
+    paintQueueItem(item);
+    queueSyncControls();
+  }
+
+  /* 逐文件结果 → 作业信息。rejected 是 paperbox 的逐文件校验失败（不重试）。 */
+  function uploadResult(payload) {
+    var results = payload && Array.isArray(payload.results) ? payload.results : [];
+    var first = results.length ? results[0] : null;
+    if (!first) throw new Error("后端未返回逐文件结果");
+    if (first.status === "rejected") {
+      throw new Error(
+        text(first.error_code, "REJECTED") + "：" + text(first.error_message, "被拒绝")
+      );
+    }
+    if (!first.job_id) throw new Error("后端未返回 job_id");
+    return first;
+  }
+
+  /* 提交后的作业轮询：不占用并发位（池只管上传请求），每 2s 一次直到终态。 */
   function pollQueueItem(item) {
     return new Promise(function (resolve) {
       function tick() {
-        if (state.queue.halt) {
+        item.timer = null;
+        if (state.queue.halt) {          // 停止后不再跟踪（作业在 paperbox 里继续跑）
           resolve(null);
           return;
         }
@@ -1044,6 +1249,7 @@
             if (job.paper_id) item.paperId = job.paper_id;
 
             if (job.stage === "FAILED") {
+              item.jobDone = true;
               item.status = "failed";
               item.percent = progress;
               item.label = "失败";
@@ -1055,6 +1261,7 @@
               return;
             }
             if (job.stage === "COMPLETED") {
+              item.jobDone = true;
               item.status = job.duplicate ? "duplicate" : "done";
               item.percent = 100;
               item.label = job.duplicate ? "重复论文（已存在）" : "已完成";
@@ -1090,7 +1297,6 @@
   }
 
   function processQueueItem(item) {
-    state.queue.current = item;
     item.error = null;
     var submitted;
 
@@ -1114,20 +1320,47 @@
 
     return submitted
       .then(function (data) {
+        queueRelease(item);              // 上传请求结束，立刻让位给下一个 pending
+        if (data && data.busy) {         // 429：退避重试，不是失败
+          queueBackOff(item, data.retryAfter);
+          return null;
+        }
         if (state.queue.halt) {
           queueMarkCanceled(item);
           return null;
         }
-        var jobId = data && data.job_id ? data.job_id : null;
-        if (!jobId) throw new Error("后端未返回 job_id");
-        item.jobId = jobId;
+        var result = item.kind === "file"
+          ? uploadResult(data && data.payload)
+          : {
+              status: "accepted",
+              job_id: data && data.job_id,
+              paper_id: data && data.paper_id
+            };
+        item.jobId = result.job_id;
+        if (result.paper_id) item.paperId = result.paper_id;
+
+        if (result.status === "duplicate") {
+          // 库内已有相同内容：不产生新论文，作业已 COMPLETED，不用轮询
+          item.jobDone = true;
+          item.status = "duplicate";
+          item.percent = 100;
+          item.label = "重复论文（已存在）";
+          paintQueueItem(item);
+          queueSyncControls();
+          loadHealth();
+          return null;
+        }
+
         item.status = "submitted";
         item.percent = 100;
-        item.label = "已提交（job " + String(jobId).slice(0, 8) + "）";
+        item.label = "已提交（job " + String(item.jobId).slice(0, 8) + "）";
         paintQueueItem(item);
-        return pollQueueItem(item);
+        queueSyncControls();
+        pollQueueItem(item);             // 后台轮询，不阻塞并发池
+        return null;
       })
       .catch(function (error) {
+        queueRelease(item);
         if (state.queue.halt || (error && error.aborted)) {
           queueMarkCanceled(item);
           return null;
@@ -1364,6 +1597,7 @@
 
   function init() {
     bind();
+    loadConfig();                 // 拿不到配置就用内置默认，不阻塞上传
     loadHealth();
     window.setInterval(loadHealth, HEALTH_INTERVAL_MS);
   }

@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shutil
+import subprocess
 from collections.abc import Callable
 
 import httpx
@@ -17,11 +19,12 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, UploadFile
 
 from webui.client import PaperboxClient
-from webui.config import Settings, get_settings
+from webui.config import REPO_ROOT, Settings, get_settings
 from webui.main import create_app
 from webui.routers import ingest as ingest_routes
 
 Handler = Callable[[httpx.Request], httpx.Response]
+JS_TEST_DIR = REPO_ROOT / "tests" / "js"
 
 
 class _RecordingStream(io.BytesIO):
@@ -719,3 +722,67 @@ def test_app_js_is_served_and_implements_the_queue() -> None:
         assert symbol in body, symbol
     # 上传进度依赖 XHR（fetch 拿不到 upload 进度）
     assert "xhr.upload.onprogress" in body
+
+
+def test_app_js_uses_the_concurrent_queue() -> None:
+    """Guard the queue rewrite: pool, backoff and the new endpoints must stay."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in ("uploadSlots", "retryDelayMs", "state.queue.inflight", "queueBackOff",
+                   "Retry-After", "/api/ui/ingest/files", "/api/ui/config"):
+        assert symbol in body, symbol
+    assert 'form.append("files"' in body, "one file per request, field name files"
+    assert "/api/ui/ingest/file\"" not in body, "the legacy single-file endpoint is no longer used"
+
+
+def test_index_loads_the_queue_logic_before_app_js() -> None:
+    """``app.js`` reads ``window.PaperboxQueue`` at call time, but keep the order."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    html = client.get("/").text
+
+    assert 'src="/static/queue-logic.js"' in html
+    assert html.index("queue-logic.js") < html.index("app.js")
+
+
+def test_queue_logic_is_served_and_exports_the_helpers() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, _ = build_app(handler)
+    response = client.get("/static/queue-logic.js")
+
+    assert response.status_code == 200
+    body = response.text
+    for symbol in ("parseRetryAfter", "retryDelayMs", "summarizeProgress",
+                   "uploadSlots", "shouldSuggestServerSide"):
+        assert symbol in body, symbol
+    assert "module.exports" in body, "the file must stay loadable by node:test"
+
+
+def test_queue_logic_passes_the_node_tests() -> None:
+    """The pure logic is really executed: ``node --test tests/js/*.test.mjs``."""
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - the local box has node v24
+        pytest.skip("node is not installed; the string guards above still apply")
+
+    suites = sorted(JS_TEST_DIR.glob("*.test.mjs"))
+    assert suites, "no JS test files found"
+    result = subprocess.run(
+        [node, "--test", *[str(path) for path in suites]],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fail 0" in result.stdout, result.stdout
