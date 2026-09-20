@@ -189,6 +189,23 @@ class PaperboxClient:
             timeout=self.settings.ingest_timeout,
         )
 
+    async def ingest_files(
+        self, files: list[tuple[str, Any, str]]
+    ) -> PaperboxResponse:
+        """Upload one or more files in a single request (2026-09-19 contract).
+
+        Each entry is ``(filename, fileobj, content_type)``. The file objects go
+        to httpx untouched, so the multipart body is streamed in 64KB chunks --
+        a caller passing ``UploadFile.file`` (a seekable ``SpooledTemporaryFile``)
+        never buffers the whole PDF in this process.
+        """
+        return await self._request(
+            "POST",
+            "/api/papers/ingest/files",
+            files=[("files", (name, handle, ctype)) for name, handle, ctype in files],
+            timeout=self.settings.ingest_timeout,
+        )
+
     async def search(self, payload: dict[str, Any]) -> PaperboxResponse:
         return await self._request("POST", "/api/search", json=payload)
 

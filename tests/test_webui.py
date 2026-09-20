@@ -6,18 +6,38 @@ needs a live service or network access.
 
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 from collections.abc import Callable
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers, UploadFile
 
 from webui.client import PaperboxClient
 from webui.config import Settings
 from webui.main import create_app
+from webui.routers import ingest as ingest_routes
 
 Handler = Callable[[httpx.Request], httpx.Response]
+
+
+class _RecordingStream(io.BytesIO):
+    """Stand-in for ``UploadFile.file`` that notices a whole-file ``read()``."""
+
+    def __init__(self, data: bytes) -> None:
+        super().__init__(data)
+        self.whole_reads = 0
+        self.chunk_reads = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            self.whole_reads += 1
+        else:
+            self.chunk_reads += 1
+        return super().read(size)
 
 HEALTH_BODY = {
     "status": "ok",
@@ -356,6 +376,106 @@ def test_ingest_file_uploads_multipart() -> None:
     assert request.headers["content-type"].startswith("multipart/form-data")
     assert b"local-paper.pdf" in request.content
     assert b"%PDF-1.5 local bytes" in request.content
+
+
+# --------------------------------------------------------------------------- #
+# /api/ui/ingest/files (multi-file proxy)
+# --------------------------------------------------------------------------- #
+
+
+def test_ingest_files_proxies_every_part() -> None:
+    """Two files in, one multipart request out, per-file results straight back."""
+    results = {
+        "request_id": "req-1",
+        "accepted": 2,
+        "duplicate": 0,
+        "rejected": 0,
+        "results": [
+            {"filename": "a.pdf", "status": "accepted", "job_id": "job-a", "paper_id": None},
+            {"filename": "b.pdf", "status": "accepted", "job_id": "job-b", "paper_id": None},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json=results)
+
+    client, seen = build_app(handler)
+    response = client.post(
+        "/api/ui/ingest/files",
+        files=[
+            ("files", ("a.pdf", b"%PDF-1.5 aaa", "application/pdf")),
+            ("files", ("b.pdf", b"%PDF-1.5 bbb", "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 202
+    assert response.json() == results
+    request = seen[0]
+    assert request.url.path == "/api/papers/ingest/files"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    body = request.content
+    assert body.count(b'name="files"') == 2
+    for name, payload in ((b"a.pdf", b"%PDF-1.5 aaa"), (b"b.pdf", b"%PDF-1.5 bbb")):
+        assert name in body
+        assert payload in body
+
+
+def test_ingest_files_passes_the_busy_signal_through() -> None:
+    """429 + Retry-After is the contract the upload queue backs off on."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": "server busy: uploads in flight; retry after 2s"},
+            headers={"Retry-After": "2"},
+        )
+
+    client, seen = build_app(handler)
+    response = client.post(
+        "/api/ui/ingest/files",
+        files=[("files", ("a.pdf", b"%PDF-1.5 aaa", "application/pdf"))],
+    )
+
+    assert seen[0].url.path == "/api/papers/ingest/files"
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "2"
+
+
+def test_ingest_files_unreachable_is_502() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client, _ = build_app(handler)
+    response = client.post(
+        "/api/ui/ingest/files",
+        files=[("files", ("a.pdf", b"%PDF-1.5 aaa", "application/pdf"))],
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"].startswith("paperbox unreachable")
+
+
+def test_ingest_files_streams_the_handles_instead_of_slurping() -> None:
+    """K concurrent uploads must not be read into the BFF's memory in one go."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json={"request_id": "req-2", "accepted": 1, "results": []})
+
+    stream = _RecordingStream(b"%PDF-1.5" + b"x" * 4096)
+    upload = UploadFile(
+        file=stream,
+        size=4103,
+        filename="big.pdf",
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+
+    response = asyncio.run(
+        ingest_routes.ingest_files(files=[upload], client=build_client(handler))
+    )
+
+    assert response.status_code == 202
+    assert stream.whole_reads == 0, "the upload was read into memory in one call"
+    assert stream.chunk_reads > 0
 
 
 # --------------------------------------------------------------------------- #

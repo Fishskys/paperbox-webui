@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -63,6 +65,42 @@ async def ingest_file(
     except PaperboxUnreachable as exc:
         return unreachable(exc)
     return _json(response)
+
+
+@router.post("/ingest/files", status_code=202)
+async def ingest_files(
+    files: list[UploadFile] = File(...),
+    client: PaperboxClient = Depends(get_client),
+) -> JSONResponse:
+    """Queue one or more uploaded PDFs via ``POST /api/papers/ingest/files``.
+
+    The browser sends one file per request (parallelism comes from concurrent
+    requests, and a single-file request is interactive priority on the paperbox
+    side); the list keeps the endpoint honest for batch callers. The parts are
+    relayed as spooled temp files -- ``await file.read()`` here would put
+    concurrency x 100MB into this process at once.
+    """
+    try:
+        response = await client.ingest_files(_upload_parts(files))
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
+def _upload_parts(files: list[UploadFile]) -> list[tuple[str, Any, str]]:
+    """``(filename, handle, content_type)`` triples httpx can stream from."""
+    parts: list[tuple[str, Any, str]] = []
+    for upload in files:
+        handle = upload.file
+        handle.seek(0)
+        parts.append(
+            (
+                upload.filename or "upload.pdf",
+                handle,
+                upload.content_type or "application/pdf",
+            )
+        )
+    return parts
 
 
 def _json(response) -> JSONResponse:
