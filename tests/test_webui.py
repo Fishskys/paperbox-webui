@@ -22,6 +22,7 @@ from webui.client import PaperboxClient
 from webui.config import REPO_ROOT, Settings, get_settings
 from webui.main import create_app
 from webui.routers import ingest as ingest_routes
+from webui.routers import metadata as metadata_routes
 
 Handler = Callable[[httpx.Request], httpx.Response]
 JS_TEST_DIR = REPO_ROOT / "tests" / "js"
@@ -802,3 +803,355 @@ def test_queue_logic_passes_the_node_tests() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fail 0" in result.stdout, result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# /api/ui/jobs paging + retry (2026-09-23)
+# --------------------------------------------------------------------------- #
+
+
+def test_jobs_list_forwards_the_page_window_and_stage() -> None:
+    """The job tab pages server-side, so offset/stage must reach paperbox."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(
+            {"total": 137, "limit": 10, "offset": 20, "stage": "FAILED", "jobs": []}
+        )
+
+    client, seen = build_app(handler)
+    response = client.get(
+        "/api/ui/jobs",
+        params={"limit": 10, "offset": 20, "stage": "FAILED", "paper_id": "p1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 137
+    request = seen[0]
+    assert request.url.path == "/api/jobs"
+    assert request.url.params["limit"] == "10"
+    assert request.url.params["offset"] == "20"
+    assert request.url.params["stage"] == "FAILED"
+    assert request.url.params["paper_id"] == "p1"
+
+
+def test_jobs_list_omits_an_absent_stage() -> None:
+    """No filter means no filter: paperbox must not receive ``stage=""``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"total": 0, "jobs": []})
+
+    client, seen = build_app(handler)
+    client.get("/api/ui/jobs")
+
+    assert "stage" not in seen[0].url.params
+    assert "paper_id" not in seen[0].url.params
+    assert seen[0].url.params["offset"] == "0"
+
+
+def test_jobs_list_rejects_a_negative_offset() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, seen = build_app(handler)
+
+    assert client.get("/api/ui/jobs", params={"offset": -1}).status_code == 422
+    assert seen == [], "the BFF must not forward an impossible window"
+
+
+def test_job_retry_is_proxied_as_a_post() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json={"job_id": "j1", "stage": "QUEUED"})
+
+    client, seen = build_app(handler)
+    response = client.post("/api/ui/jobs/j1/retry")
+
+    assert response.status_code == 202
+    assert response.json()["stage"] == "QUEUED"
+    assert (seen[0].method, seen[0].url.path) == ("POST", "/api/jobs/j1/retry")
+
+
+def test_job_retry_passes_the_409_through() -> None:
+    """Retrying a job that is not FAILED is paperbox's decision, not ours."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "only FAILED jobs can be retried"})
+
+    client, _ = build_app(handler)
+    response = client.post("/api/ui/jobs/j1/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "only FAILED jobs can be retried"
+
+
+# --------------------------------------------------------------------------- #
+# /api/ui/consistency
+# --------------------------------------------------------------------------- #
+
+
+def test_consistency_proxies_the_limit() -> None:
+    report = {
+        "checked_at": "2026-09-23T10:00:00Z",
+        "consistent": True,
+        "index": "paper_chunks_v2",
+        "index_exists": True,
+        "totals": {"papers_live": 68, "documents_os": 2883, "problems": 0},
+        "problems": [],
+        "orphan_objects": [],
+        "orphan_documents": [],
+        "errors": [],
+        "truncated": False,
+        "took_ms": 812.5,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(report)
+
+    client, seen = build_app(handler)
+    response = client.get("/api/ui/consistency", params={"limit": 5})
+
+    assert response.status_code == 200
+    assert response.json() == report
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/api/consistency")
+    assert seen[0].url.params["limit"] == "5"
+
+
+def test_consistency_keeps_a_partial_report_at_200() -> None:
+    """One dead store is a report *with errors*, never a 5xx: the others answered."""
+
+    report = {
+        "checked_at": "2026-09-23T10:00:00Z",
+        "consistent": True,
+        "index": "paper_chunks_current",
+        "index_exists": False,
+        "totals": {"papers_live": 68, "problems": 0},
+        "problems": [],
+        "errors": ["opensearch: connection refused"],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(report)
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/consistency")
+
+    assert response.status_code == 200
+    assert response.json()["errors"] == ["opensearch: connection refused"]
+
+
+def test_consistency_unreachable_is_502() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/consistency")
+
+    assert response.status_code == 502
+    assert response.json()["detail"].startswith("paperbox unreachable")
+
+
+# --------------------------------------------------------------------------- #
+# /api/ui/metadata/*
+# --------------------------------------------------------------------------- #
+
+
+class _FormRequest:
+    """Minimal stand-in for a Starlette ``Request`` carrying one multipart part.
+
+    Lets a test call the router function directly (no TestClient), which is how
+    the streaming assertions below observe the file handle.
+    """
+
+    def __init__(self, upload: UploadFile) -> None:
+        self.headers = {"content-type": "multipart/form-data; boundary=x"}
+        self._upload = upload
+
+    async def form(self) -> dict[str, UploadFile]:
+        return {"file": self._upload}
+
+    async def json(self):  # pragma: no cover - only the multipart branch is used
+        raise ValueError("not a json body")
+
+
+def test_metadata_import_forwards_a_multipart_file_and_the_query() -> None:
+    report = {"total": 2, "matched": 1, "ambiguous": 1, "dry_run": True, "format": "csl"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(report)
+
+    client, seen = build_app(handler)
+    response = client.post(
+        "/api/ui/metadata/import",
+        params={"source_type": "ieee_api", "limit": 5},
+        files={"file": ("records.json", b'[{"title": "x"}]', "application/json")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == report
+    request = seen[0]
+    assert request.url.path == "/api/metadata/import"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    # dry_run is the documented default and is always stated explicitly
+    assert request.url.params["dry_run"] == "true"
+    assert request.url.params["source_type"] == "ieee_api"
+    assert request.url.params["limit"] == "5"
+    assert "apply" not in request.url.params
+    body = request.content
+    assert b'name="file"' in body
+    assert b'[{"title": "x"}]' in body
+
+
+def test_metadata_import_streams_the_file_handle() -> None:
+    """A big record set must not be read into this process in one call."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"total": 1, "dry_run": True})
+
+    stream = _RecordingStream(b"[" + b'{"title":"x"},' * 512 + b'{"title":"y"}]')
+    upload = UploadFile(
+        file=stream,
+        size=0,
+        filename="records.json",
+        headers=Headers({"content-type": "application/json"}),
+    )
+
+    response = asyncio.run(
+        metadata_routes.import_metadata(
+            request=_FormRequest(upload),
+            dry_run=True,
+            apply=None,
+            limit=None,
+            source_type="import_file",
+            client=build_client(handler),
+        )
+    )
+
+    assert response.status_code == 200
+    assert stream.whole_reads == 0, "the upload was read into memory in one call"
+    assert stream.chunk_reads > 0
+
+
+def test_metadata_import_forwards_a_json_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"total": 1, "dry_run": False})
+
+    client, seen = build_app(handler)
+    payload = [{"title": "x", "doi": "10.1/x"}]
+    response = client.post("/api/ui/metadata/import", params={"apply": "true"}, json=payload)
+
+    assert response.status_code == 200
+    request = seen[0]
+    assert request.url.path == "/api/metadata/import"
+    assert request.headers["content-type"].startswith("application/json")
+    assert json.loads(request.content) == payload
+    assert request.url.params["apply"] == "true"
+
+
+def test_metadata_import_rejects_an_unsupported_content_type() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, seen = build_app(handler)
+    response = client.post(
+        "/api/ui/metadata/import",
+        content=b"title=x",
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 415
+    assert seen == [], "nothing to forward, so nothing was forwarded"
+
+
+def test_metadata_import_needs_a_file_part() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        return httpx.Response(500)
+
+    client, seen = build_app(handler)
+    # ``data=`` would send urlencoded; a text part keeps this a multipart request
+    response = client.post("/api/ui/metadata/import", files={"other": (None, "x")})
+
+    assert response.status_code == 422
+    assert "file" in response.json()["detail"]
+    assert seen == []
+
+
+def test_metadata_import_unreachable_is_502() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client, _ = build_app(handler)
+    response = client.post(
+        "/api/ui/metadata/import",
+        files={"file": ("records.json", b"[]", "application/json")},
+    )
+
+    assert response.status_code == 502
+
+
+def test_metadata_review_forwards_repeated_status() -> None:
+    review = {
+        "total": 1,
+        "items": [{"source_id": "s1", "match_status": "ambiguous"}],
+        "conflicts": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(review)
+
+    client, seen = build_app(handler)
+    response = client.get(
+        "/api/ui/metadata/review",
+        params=[("status", "ambiguous"), ("status", "pending"), ("limit", 10)],
+    )
+
+    assert response.status_code == 200
+    assert response.json() == review
+    assert seen[0].url.path == "/api/metadata/review"
+    assert seen[0].url.params.get_list("status") == ["ambiguous", "pending"]
+    assert seen[0].url.params["limit"] == "10"
+
+
+def test_metadata_attach_forwards_the_body_verbatim() -> None:
+    attached = {
+        "source_id": "s1",
+        "paper_id": "p1",
+        "source_type": "ieee_api",
+        "match_status": "attached",
+        "merged_fields": ["title", "year"],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(attached)
+
+    client, seen = build_app(handler)
+    response = client.post("/api/ui/metadata/sources/s1/attach", json={"paper_id": "p1"})
+
+    assert response.status_code == 200
+    assert response.json()["merged_fields"] == ["title", "year"]
+    request = seen[0]
+    assert (request.method, request.url.path) == ("POST", "/api/metadata/sources/s1/attach")
+    assert json.loads(request.content) == {"paper_id": "p1"}
+
+
+def test_metadata_apply_forwards_the_body_verbatim() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"applied": 1, "skipped": 0, "errors": []})
+
+    client, seen = build_app(handler)
+    body = {"entries": [{"source_ref": "r1", "paper_id": "p1"}], "mode": "fill"}
+    response = client.post("/api/ui/metadata/apply", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["applied"] == 1
+    assert (seen[0].method, seen[0].url.path) == ("POST", "/api/metadata/apply")
+    assert json.loads(seen[0].content) == body
+
+
+def test_metadata_apply_passes_a_422_through() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": "unknown source_type: nope"})
+
+    client, _ = build_app(handler)
+    response = client.post("/api/ui/metadata/apply", json={"entries": []})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "unknown source_type: nope"
