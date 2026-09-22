@@ -79,6 +79,52 @@
             <span>标签</span>
             <input type="text" id="filter-tag" placeholder="tag" autocomplete="off" />
           </label>
+
+          <details class="filter-extra" open>
+            <summary>更多过滤（会议届 / 论文类型 / 标识符 / 索引词）</summary>
+            <div class="form-grid filter-extra-grid">
+              <label class="field">
+                <span>会议 / 期刊届（venue_year）</span>
+                <input type="text" id="filter-venue-year" placeholder="2021, 2022" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>标识符（scheme:value）</span>
+                <input type="text" id="filter-identifier" placeholder="ieee_article_number:7065247" autocomplete="off" />
+              </label>
+              <div class="field field-wide">
+                <span>论文类型（paper_type）</span>
+                <div class="check-row" id="filter-paper-type">
+                  <label class="check"><input type="checkbox" name="paper-type" value="journal" /> journal</label>
+                  <label class="check"><input type="checkbox" name="paper-type" value="conference" /> conference</label>
+                  <label class="check"><input type="checkbox" name="paper-type" value="preprint" /> preprint</label>
+                  <label class="check"><input type="checkbox" name="paper-type" value="early_access" /> early_access</label>
+                  <label class="check"><input type="checkbox" name="paper-type" value="standard" /> standard</label>
+                </div>
+              </div>
+              <label class="field">
+                <span>IEEE 主题词（ieee_terms）</span>
+                <input type="text" id="filter-ieee-terms" placeholder="low power sram" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>作者索引词（author_terms）</span>
+                <input type="text" id="filter-author-terms" placeholder="j. smith" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>动态索引词（dynamic_index_terms）</span>
+                <input type="text" id="filter-dynamic-index-terms" placeholder="dynamic index" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>来源标签（source_tags）</span>
+                <input type="text" id="filter-source-tags" placeholder="ieee" autocomplete="off" />
+              </label>
+            </div>
+            <p class="muted filter-extra-hint">
+              这几项过滤的是<strong>索引时的元数据快照</strong>：改完元数据要跑
+              <code>scripts/refresh_index_metadata.py</code>（或对论文 reindex）才会在检索里生效。
+              标识符必须是 <code>scheme:value</code>，写错的项会被就地忽略并提示。
+            </p>
+          </details>
+
           <div class="form-actions">
             <button type="submit" class="btn btn-primary" id="btn-search">检索</button>
             <button type="reset" class="btn btn-ghost" id="btn-search-reset">重置</button>
@@ -226,6 +272,7 @@
 
     <div class="toast-stack" id="toast-stack"></div>
 
+    <script src="/static/search-logic.js"></script>
     <script src="/static/queue-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>

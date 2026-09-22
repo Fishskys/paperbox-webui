@@ -460,6 +460,45 @@ code {
   border: 1px solid var(--border);
 }
 
+/* ---------------- 检索表单：更多过滤（2026-09-23） ---------------- */
+
+.filter-extra {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+}
+
+.filter-extra > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.filter-extra-grid {
+  margin-top: 10px;
+}
+
+.filter-extra-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+/* 元数据快照回显的那一行（venue / 届 / 类型 / 卷期页 / 发表日期） */
+.result-meta-extra {
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .evidence-text {
   margin: 0;
   font-size: 12.5px;

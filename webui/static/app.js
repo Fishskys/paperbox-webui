@@ -5,6 +5,9 @@
   /* 队列的纯逻辑在 queue-logic.js（index.html 里先于本文件加载），
    * 并发 / 退避 / 两阶段计数的规则在那里，并被 node:test 真测。 */
   var QL = window.PaperboxQueue;
+  /* 检索过滤器的纯逻辑在 search-logic.js（同样先于本文件加载）：空值不发、
+   * 标识符 scheme 校验、年份解析都在那里，并被 node:test 真测。 */
+  var SL = window.PaperboxSearch;
 
   var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
@@ -199,33 +202,40 @@
 
   /* ---------------- Tab 1：检索 ---------------- */
 
-  function splitList(value) {
-    if (!value) return [];
-    return value
-      .split(/[,，]/)
-      .map(function (item) {
-        return item.trim();
-      })
-      .filter(function (item) {
-        return item.length > 0;
-      });
+  function paperTypeValues() {
+    var boxes = document.querySelectorAll(
+      '#filter-paper-type input[name="paper-type"]:checked'
+    );
+    var values = [];
+    for (var i = 0; i < boxes.length; i++) values.push(boxes[i].value);
+    return values;
   }
 
+  /* 表单 → paperbox 的 `filters`。规则（哪些键会发出去、什么输入就地拦下）全在
+   * search-logic.js 里，这里只负责读 DOM；`problems` 是给人看的提示，发送前会删掉。 */
   function buildSearchBody() {
-    var filters = {
-      year_from: $("filter-year-from").value ? Number($("filter-year-from").value) : null,
-      year_to: $("filter-year-to").value ? Number($("filter-year-to").value) : null,
-      authors: splitList($("filter-authors").value),
-      venue: $("filter-venue").value.trim() || null,
-      doi: $("filter-doi").value.trim() || null,
-      arxiv_id: $("filter-arxiv").value.trim() || null,
-      tag: $("filter-tag").value.trim() || null
-    };
+    var built = SL.buildFilters({
+      yearFrom: $("filter-year-from").value,
+      yearTo: $("filter-year-to").value,
+      authors: $("filter-authors").value,
+      venue: $("filter-venue").value,
+      doi: $("filter-doi").value,
+      arxivId: $("filter-arxiv").value,
+      tag: $("filter-tag").value,
+      venueYear: $("filter-venue-year").value,
+      paperTypes: paperTypeValues(),
+      identifiers: $("filter-identifier").value,
+      ieeeTerms: $("filter-ieee-terms").value,
+      authorTerms: $("filter-author-terms").value,
+      dynamicIndexTerms: $("filter-dynamic-index-terms").value,
+      sourceTags: $("filter-source-tags").value
+    });
     return {
       query: $("search-query").value.trim(),
       mode: $("search-mode").value,
       top_k: Number($("search-topk").value) || 10,
-      filters: filters
+      filters: built.filters,
+      problems: built.problems
     };
   }
 
@@ -272,6 +282,17 @@
     meta.appendChild(el("span", null, "年份 " + text(result.year, "未知")));
     card.appendChild(meta);
 
+    /* 元数据快照回显（venue/届/类型/卷期页/发表日期）：后端给了才显示，
+     * 不给就不凭空补（存量论文这些列大多还是 NULL）。 */
+    var extra = SL.metadataLine(result);
+    if (extra.length) {
+      var extraLine = el("div", "result-meta result-meta-extra");
+      extra.forEach(function (part) {
+        extraLine.appendChild(el("span", "tag", part));
+      });
+      card.appendChild(extraLine);
+    }
+
     var badges = el("div", "badges");
     badges.appendChild(el("span", "badge badge-score", "score " + fmtScore(result.score)));
     badges.appendChild(relevanceBadge(result.relevance));
@@ -286,6 +307,9 @@
   function runSearch(event) {
     if (event) event.preventDefault();
     var body = buildSearchBody();
+    var problems = body.problems || [];
+    delete body.problems;              // 只是给人看的提示，不进请求体
+    if (problems.length) toast(problems.join("；"), "warn");
     var results = $("search-results");
     var empty = $("search-empty");
     var summary = $("search-summary");
@@ -312,6 +336,7 @@
         empty.textContent = "没有命中结果。";
         summary.hidden = false;
         clear(summary);
+        var filterCount = SL.countFilters(body.filters);
         summary.appendChild(
           el(
             "span",
@@ -322,7 +347,8 @@
               text(data.total, items.length) +
               " 篇 · 耗时 " +
               (typeof data.took_ms === "number" ? data.took_ms.toFixed(1) : "—") +
-              " ms"
+              " ms" +
+              (filterCount ? " · 过滤 " + filterCount + " 项" : "")
           )
         );
         items.forEach(function (item) {
