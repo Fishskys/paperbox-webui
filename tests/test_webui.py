@@ -1155,3 +1155,92 @@ def test_metadata_apply_passes_a_422_through() -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "unknown source_type: nope"
+
+
+# --------------------------------------------------------------------------- #
+# Tab 1: the metadata-snapshot filters (2026-09-23)
+# --------------------------------------------------------------------------- #
+
+
+def _static_handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+    return httpx.Response(500)
+
+
+def test_index_shell_exposes_the_metadata_filters() -> None:
+    """Tab 1 must offer what paperbox's ``SearchFilters`` grew on 2026-09-22."""
+
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    for marker in (
+        "filter-venue-year",
+        "filter-identifier",
+        "filter-paper-type",
+        "filter-ieee-terms",
+        "filter-author-terms",
+        "filter-dynamic-index-terms",
+        "filter-source-tags",
+    ):
+        assert f'id="{marker}"' in html, marker
+    for paper_type in ("journal", "conference", "preprint", "early_access", "standard"):
+        assert f'value="{paper_type}"' in html, paper_type
+    # 快照过滤必须提醒"改了元数据要刷新索引"，否则会被误当成 bug
+    assert "refresh_index_metadata.py" in html
+
+
+def test_index_loads_the_search_logic_before_app_js() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    assert 'src="/static/search-logic.js"' in html
+    assert html.index("search-logic.js") < html.index("app.js")
+
+
+def test_search_logic_is_served_and_exports_the_helpers() -> None:
+    client, _ = build_app(_static_handler)
+    response = client.get("/static/search-logic.js")
+
+    assert response.status_code == 200
+    body = response.text
+    for symbol in (
+        "SCHEMES",
+        "PAPER_TYPES",
+        "buildFilters",
+        "parseIdentifiers",
+        "parseYear",
+        "countFilters",
+        "metadataLine",
+    ):
+        assert symbol in body, symbol
+    assert "module.exports" in body, "the file must stay loadable by node:test"
+
+
+def test_app_js_delegates_filter_building_to_the_shared_logic() -> None:
+    """``filters`` is assembled in search-logic.js now, not inline in app.js."""
+
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in ("PaperboxSearch", "buildFilters", "metadataLine", "countFilters"):
+        assert symbol in body, symbol
+    assert "year_from:" not in body, "the filter keys moved into search-logic.js"
+    assert 'name="paper-type"' in body, "the paper_type checkboxes are read by app.js"
+
+
+def test_search_logic_passes_the_node_tests() -> None:
+    """The pure filter logic really runs: ``node --test tests/js/*.test.mjs``."""
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - the local box has node v24
+        pytest.skip("node is not installed; the string guards above still apply")
+
+    suites = sorted(JS_TEST_DIR.glob("*.test.mjs"))
+    result = subprocess.run(
+        [node, "--test", *[str(path) for path in suites]],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fail 0" in result.stdout, result.stdout
