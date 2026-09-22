@@ -32,16 +32,23 @@ webui/
     config.py        GET /api/ui/config        上传队列调参（并发 / 退避 / 文件上限）
     papers.py        GET  /api/ui/papers, /api/ui/papers/{id},
                           /api/ui/papers/{id}/chunks, /api/ui/papers/{id}/file
-    jobs.py          GET  /api/ui/jobs, /api/ui/jobs/queue, /api/ui/jobs/{id}
+    jobs.py          GET  /api/ui/jobs, /api/ui/jobs/queue, /api/ui/jobs/{id},
+                          POST /api/ui/jobs/{id}/retry
                           （/jobs/queue 必须声明在 /jobs/{job_id} 之前，否则被路径参数吞掉）
     ingest.py        POST /api/ui/ingest (JSON url), POST /api/ui/ingest/file,
                           POST /api/ui/ingest/files (multipart，字段 files 可重复)
     search.py        POST /api/ui/search
     actions.py       POST /api/ui/papers/{id}/reindex, DELETE /api/ui/papers/{id}
+    consistency.py   GET  /api/ui/consistency（三端对账：只读、永不抛）
+    metadata.py      POST /api/ui/metadata/import（multipart file 或 JSON 体）,
+                          GET  /api/ui/metadata/review,
+                          POST /api/ui/metadata/sources/{source_id}/attach,
+                          POST /api/ui/metadata/apply
   static/
-    index.html  app.js  queue-logic.js  style.css
+    index.html  app.js  search-logic.js  jobs-logic.js  queue-logic.js  style.css
 tests/
-  __init__.py  test_webui.py  js/queue_logic.test.mjs
+  __init__.py  test_webui.py  js/queue_logic.test.mjs  js/search_logic.test.mjs
+                                                js/jobs_logic.test.mjs
 ```
 
 ## 2. 配置（.env，已存在真实值）
@@ -67,12 +74,15 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
 
 ## 3. 后端要求
 
-- `PaperboxClient`：`AsyncClient`，默认带 `Authorization: Bearer <key>`；方法：
+- `PaperboxClient`：`AsyncClient`，默认带 paperbox 的鉴权请求头（key 取自 `.env` 的 `PAPERBOX_API_KEY`，代码与文档都不写真实值）；方法：
   `health()`、`list_papers(limit, offset, status, q)`、`get_paper(id)`、
   `get_paper_file(id) -> (bytes, headers)`（流式）、`get_chunks(id, limit, offset)`、
-  `list_jobs(limit, paper_id)`、`get_job(id)`、`job_queue()`、`ingest_url(url)`、
+  `list_jobs(limit, offset, stage, paper_id)`、`get_job(id)`、`retry_job(id)`、`job_queue()`、
+  `ingest_url(url)`、
   `ingest_file(filename, content, content_type)`、`ingest_files([(filename, fileobj, ctype)])`、
-  `search(payload)`、`reindex(id)`、`delete_paper(id)`。
+  `search(payload)`、`reindex(id)`、`delete_paper(id)`、
+  `consistency(limit)`、`import_metadata(...)`、`metadata_review(status, limit)`、
+  `attach_source(source_id, paper_id)`、`apply_metadata(entries, mode)`。
 - **错误透传**：paperbox 返回非 2xx 时，把其状态码与 `{"detail": ...}` 原样返回给前端
   （不要吞成 500）；paperbox 不可达时返回 HTTP 502 + `{"detail": "paperbox unreachable: ..."}`。
 - **`Retry-After` 透传**：paperbox 用 `429 + Retry-After: <秒>` 表达"在途上传太多了，慢一点"。
@@ -88,6 +98,24 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
   `{"paperbox": {...paperbox /health 的 services...}, "version": "...", "papers": N, "jobs": N}`
   （统计用 paperbox 的 `GET /api/papers` 与 `GET /api/jobs` 的 `total`；任一失败不要让整个接口 500）。
 - `GET /` 返回 `webui/static/index.html`；静态目录挂到 `/static`。
+- **搜索选项透传**（2026-09-22 paperbox 新增）：`POST /api/ui/search` 的 `filters` 原样转发，
+  新增键 `venue_year` / `paper_type`（可多选→数组）/ `identifier`（`scheme:value`）/
+  `ieee_terms` / `author_terms` / `dynamic_index_terms` / `source_tags`。
+  **BFF 不做过滤键的白名单校验**：paperbox 的 `SearchFilters` 才是权威（未知 scheme → 422），
+  前端的就地校验只是为了少打一次无效请求。
+- `GET /api/ui/jobs` 必须透传 `limit`（1..200）/ `offset` / `stage` / `paper_id`，
+  并把后端的 `total` / `limit` / `offset` / `stage` 原样回给前端 —— 前端页码靠 `total` 算，
+  不自己数行。任务分页是**服务端**行为（paperbox 侧没有全量拉取的"一次给我 1000 条"用法）。
+- `POST /api/ui/jobs/{id}/retry` 透传；paperbox 对该作业不是 `FAILED` 时回 `409`，原文必须显示出来。
+- `GET /api/ui/consistency`（`limit` 转发给 `?limit=`）：**只读且永不抛**。
+  paperbox 的语义是"某个 store 不可达也要给另外两端结论"，所以：上游 200 就整份返回
+  （哪怕 `errors` 非空、`consistent=false`），上游 4xx/5xx 才按通用错误透传规则处理。
+  增加 `limit` 参数门（默认 200，1..1000），别让一次检查把问题清单拉爆。
+- 元数据四路由一对一代理 paperbox 的 `/api/metadata/*`：
+  `import` 要同时接受 multipart（字段名 `file`）与 JSON 体（`application/json`），
+  并把 `dry_run`（**默认 true**）/ `apply` / `source_type` / `limit` 作为查询参数转发；
+  `attach` 的 `source_id` 出现在**路径**里（不是查询参数），转发时不能用错；
+  `apply` 转发的 body 是 `{entries, mode}`，BFF 不改写内容。
 
 ## 4. 前端要求（单页，中文界面）
 
@@ -98,6 +126,20 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
 年份 from/to、作者/期刊/DOI/arXiv/标签过滤 → 结果卡片：标题（可点开详情）、作者、年份、
 score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、evidence 列表（页码 + 章节 + 文本，默认折叠）；
 显示耗时与命中论文数。
+
+2026-09-22 paperbox 的检索面扩了一档，Tab 1 必须跟上（**「更多过滤」折叠区**，默认收起，
+展开后是 `venue_year` / `paper_type` 多选 / `identifier` / `ieee_terms` / `author_terms` /
+`dynamic_index_terms` / `source_tags`）：
+
+- **空值不发**：没填的键不出现在请求体里（不是发 `null`/`""`）—— 这是过滤体的唯一构造入口
+  （`search-logic.js` 的 `buildFilters`），别在 `app.js` 里另拼一份。
+- **`identifier` 必须 `scheme:value`**：非法项**就地丢弃并提示**，不把整次检索拖成 422；
+  合法的 scheme 集合写死在 `search-logic.js`，与 paperbox 的 `IDENTIFIER_SCHEMES` 对齐。
+- 结果卡片回显后端**新给的字段**：`venue` + `venue_year`、`paper_type`、`volume/issue/pages`、
+  `publication_date`、`identifiers`（有则列 `scheme:value`）。
+- 界面必须写清：**这组过滤读的是索引快照**，改完元数据要跑 paperbox 的
+  `scripts/refresh_index_metadata.py` 或对该论文 reindex 才生效；`GET /api/ui/papers` 那套
+  （Tab 2 的过滤）读的是 PostgreSQL 当前值。两条路径不要混为一谈。
 
 **Tab 2「论文库」**：表格（标题 / 年份 / 状态 / 作者数 / 创建时间），支持状态过滤 + 标题搜索 + 分页
 （20/页）；每行操作按钮：详情、下载原文、重建索引、删除（二次确认）。
@@ -130,12 +172,40 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
 - 前端就地拒绝非 PDF 与超过 `file_max_mb`（默认 100MB）的文件。
 - 完成 / 重复项给出论文链接（可跳到详情抽屉），结束后刷新顶部状态条的论文 / 任务计数。
 
-**Tab 4「任务」**：最近任务表格（stage / progress / duplicate / error_message / 时间），可手动刷新。
+**Tab 4「任务」**：任务表格，**服务端分页**（`limit` + `offset`，每页 10/20/50/100/200），
+过滤 stage（十个阶段）+ `paper_id`；行内含 job_id（可复制）、阶段徽标、进度条、duplicate、
+`error_code` + `error_message`、论文（可开详情 / 可复制）、创建/更新/完成时间与**耗时**；
+`FAILED` 行提供「重试」（二次确认 → `POST /api/ui/jobs/{id}/retry`，409 原文显示）。
+页码/总数直接取后端的 `total`：**页数换算（`ceil(total/limit)`、`offset` 越界夹到最后一页、
+上一页/下一页可用性）与耗时文案必须放在 `jobs-logic.js`**，由 `tests/js/jobs_logic.test.mjs` 真跑；
+`app.js` 只负责把结果画进 DOM。可勾选「每 5 秒自动刷新」，自动刷新**保持当前页**。
+
+**Tab 5「一致性」**：`GET /api/ui/consistency` 的只读视图 —— 问题条目上限（1..1000，默认 200）+
+「开始检查」+「每 30 秒自动检查」；结论区给 `一致 / 有漂移` 徽标、检查时间、耗时、索引名与存在性，
+以及总数格子（论文含已删/存活/已删、文件行、对象、chunk 行、文档、staging 残留、不一致论文、孤儿对象、孤儿文档）；
+下表逐篇列漂移（文件 PG↔MinIO、chunk PG↔OS、问题徽标、缺失对象、孤儿对象），store 级孤儿单列一卡。
+`errors` 非空时**照常渲染结论**，只在横条里点名不可达的 store（paperbox 的语义就是"两端也能给结论"）。
+
+**Tab 6「元数据」**：元数据导入闭环，按 导入 → 复核 → 批量应用 三段：
+1. 导入：来源类型（`import_file` 默认 / `ieee_api` / `crossref` / `arxiv_api` / `manual`）、
+   选文件或粘贴 JSON、可选条数上限；**试运行（`dry_run`）是默认动作**，写库要显式二次确认；
+   报告区展示 total / matched / created_shell / ambiguous / unmatched / unchanged、格式、是否写库，
+   以及来源明细（`source_ref` / 匹配状态 / 匹配方式 / 论文）与冲突表（保留值 vs 被拒值）。
+2. 复核：`GET /api/ui/metadata/review` 的清单（可只看 `ambiguous`），逐行填 `paper_id` → 「挂载」；
+   成功后显示合并了哪些字段并刷新。
+3. 批量应用：`POST /api/ui/metadata/apply`，entries 可由上次报告的 `source_ref` 一键预填；
+   `overwrite` 模式必须二次确认（它会覆盖已有值）。
 
 **论文详情面板**（从任意 Tab 打开）：标题、作者、年份、DOI/arXiv、状态、指纹、文件列表；
 chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若干行，可展开全文）；「下载原文」「重建索引」「删除」。
 
 样式：纯 CSS、深浅色舒适可读、无外部字体/CDN；不要引入构建工具。
+
+**纯逻辑与 DOM 的分界**（三条都已落地）：`queue-logic.js`（上传队列）、`search-logic.js`
+（检索过滤体）、`jobs-logic.js`（任务分页与耗时）都是 UMD：浏览器挂 `window.PaperboxQueue` /
+`window.PaperboxSearch` / `window.PaperboxJobs`，node 走 `module.exports`。
+"会算错"的规则一律放这里并配 `node:test`；`app.js` 只做接线与渲染。
+三个模块都必须**先于 `app.js`** 加载（index.html 的 `<script>` 顺序是硬约束，静态守卫会断言）。
 
 ## 5. 测试要求（tests/）
 
@@ -151,6 +221,15 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
   `parseRetryAfter` / `retryDelayMs` / `summarizeProgress` / `uploadSlots` /
   `shouldSuggestServerSide` 由 `tests/js/queue_logic.test.mjs`（`node:test`）覆盖，
   并由 pytest 调起（node 缺失时 `skip`，字符串守卫仍然兜底）。
+- 2026-09-23 四项新能力的覆盖：
+  - `/api/ui/jobs` 的 `limit`/`offset`/`stage`/`paper_id` 透传与 `total` 回显；
+    `/api/ui/jobs/{id}/retry` 的 409 原文透传（路径不能被 `/jobs/queue` 抢走）。
+  - `/api/ui/consistency`：`limit` 透传；上游 200 且 `errors` 非空时**仍返回 200 与整份报告**；
+    上游 4xx/5xx 才走通用错误透传。
+  - `/api/ui/metadata/*`：import 的 multipart 与 JSON 两条路径、`dry_run` 默认值、
+    review 的 `status`/`limit`、attach 的 **source_id 在路径上**、apply 的 `{entries, mode}`。
+  - 静态守卫：Tab 1 的扩展过滤字段（含 `paper_type` 的五个合法值）、六个 Tab 的页面骨架、
+    Tab 4 的十个阶段下拉与分页控件、三个逻辑模块的加载顺序。
 - `uv run pytest` 必须全绿；`node --test tests/js/*.test.mjs` 必须全绿。
 
 ## 6. 验证要求（必须真跑，把真实输出写进最终回复）
@@ -169,6 +248,18 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
    - 把 paperbox 用 `INGEST_UPLOAD_CONCURRENCY=1` 启动，同时发 3 个上传 → 期望 1 个 202 + 2 个 `429 + Retry-After`
    - 浏览器里上传 6 个 PDF：确认**同时 2 个在途**、摘要出现过 `上传 x/y · 处理 a/b`、
      最终 6 个作业 COMPLETED；随后删掉探针论文，核对论文数 / doc 数 / 对象数回到导入前的基线
+4. 2026-09-23 的四项能力（paperbox 真跑，把真实输出贴进最终回复）：
+   - `curl -s "http://127.0.0.1:8088/api/ui/jobs?limit=2&offset=0"` 与 `?stage=FAILED`
+     → 回显 `total/limit/offset/stage`，两页不重复（`offset` 真的生效）
+   - `curl -s "http://127.0.0.1:8088/api/ui/consistency?limit=50"` → 总数与漂移数
+     （真机基线：68 存活 / 68 对象 / 2883 文档 / 0 漂移）
+   - `curl -s -X POST "http://127.0.0.1:8088/api/ui/search" -H 'Content-Type: application/json'`
+     带 `filters` 新键（如 `{"paper_type":["journal"]}`）→ 200；带非法 `identifier`
+     （如 `nope:1`）→ 上游 422 原文
+   - `curl -s -X POST "http://127.0.0.1:8088/api/ui/metadata/import?dry_run=true"`
+     上传一份最小记录文件 → 报告 `dry_run=true`，且**库里的行数不变**
+   - `curl -s "http://127.0.0.1:8088/api/ui/metadata/review?limit=5"` → 清单（可为空数组）
+   - 浏览器打开四个 Tab 各点一遍：任务翻页 / 一致性检查 / 元数据试运行 + 复核清单
 
 ## 7. 执行纪律
 
