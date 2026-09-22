@@ -1353,3 +1353,70 @@ def test_app_js_implements_the_metadata_tab() -> None:
     assert "new FormData()" in body
     # 两个写操作都要二次确认
     assert "window.confirm" in body
+
+
+# --------------------------------------------------------------------------- #
+# Tab 4: 任务列表的分页、详情与重试 (2026-09-23)
+# --------------------------------------------------------------------------- #
+
+
+def test_index_shell_exposes_the_jobs_filters_and_pager() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    for marker in ("jobs-stage", "jobs-paper", "jobs-limit", "jobs-prev", "jobs-next",
+                   "jobs-page-info", "jobs-total-info", "jobs-table"):
+        assert f'id="{marker}"' in html, marker
+    # 阶段下拉必须覆盖 paperbox 校验的十个阶段（写错是 422，不是空列表）
+    for stage in ("RECEIVED", "QUEUED", "DOWNLOADING", "STORED", "PARSING", "CHUNKING",
+                  "EMBEDDING", "INDEXING", "COMPLETED", "FAILED"):
+        assert f'value="{stage}"' in html, stage
+    # 每页条数不能再是自由输入：后端上限 200
+    assert 'id="jobs-limit" value=' not in html
+
+
+def test_index_shell_shows_the_richer_job_columns() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    table = html.split('id="jobs-table"')[1].split("</table>")[0]
+
+    for header in ("job_id", "阶段", "进度", "重复", "错误", "论文", "创建", "更新", "完成", "耗时", "操作"):
+        assert f"<th>{header}</th>" in table, header
+
+
+def test_app_js_pages_the_job_list_server_side() -> None:
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in ("state.jobs.offset", "offset=", "jobs-stage", "jobs-paper", "paintJobsPager",
+                   "PaperboxJobs", "pagerState", "nextOffset"):
+        assert symbol in body, symbol
+    assert "&stage=" in body and "&paper_id=" in body
+
+
+def test_app_js_retries_failed_jobs() -> None:
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in ("retryJob", "/retry", 'stage === "FAILED"', "window.confirm"):
+        assert symbol in body, symbol
+
+
+def test_jobs_logic_is_served_and_exports_the_helpers() -> None:
+    client, _ = build_app(_static_handler)
+    response = client.get("/static/jobs-logic.js")
+
+    assert response.status_code == 200
+    body = response.text
+    for symbol in ("durationText", "pagerState", "nextOffset", "RUNNING"):
+        assert symbol in body, symbol
+    assert "module.exports" in body, "the file must stay loadable by node:test"
+
+
+def test_index_loads_every_logic_module_before_app_js() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    for module in ("search-logic.js", "jobs-logic.js", "queue-logic.js"):
+        assert f'src="/static/{module}"' in html, module
+        assert html.index(module) < html.index("app.js"), module
