@@ -191,4 +191,13 @@ test("metadataLine renders only what paperbox echoed back", () => {
   assert.deepEqual(search.metadataLine({ venue: "JSSC" }), ["JSSC"]);
   assert.deepEqual(search.metadataLine({ volume: "56" }), ["56"]);
   assert.deepEqual(search.metadataLine({ issue: "2" }), ["(2)"]);
+  // 存量论文的 venue/卷期页都是 NULL，DOI 常是卡片上唯一的标识符
+  assert.deepEqual(search.metadataLine({ doi: "10.1145/3719027.3744840" }), [
+    "doi:10.1145/3719027.3744840"
+  ]);
+  assert.deepEqual(
+    search.metadataLine({ venue: "ISSCC", venue_year: 2021, doi: "10.1/x" }),
+    ["ISSCC 2021", "doi:10.1/x"]
+  );
+  assert.deepEqual(search.metadataLine({ doi: "  " }), []);
 });

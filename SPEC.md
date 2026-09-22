@@ -135,8 +135,10 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
   （`search-logic.js` 的 `buildFilters`），别在 `app.js` 里另拼一份。
 - **`identifier` 必须 `scheme:value`**：非法项**就地丢弃并提示**，不把整次检索拖成 422；
   合法的 scheme 集合写死在 `search-logic.js`，与 paperbox 的 `IDENTIFIER_SCHEMES` 对齐。
-- 结果卡片回显后端**新给的字段**：`venue` + `venue_year`、`paper_type`、`volume/issue/pages`、
-  `publication_date`、`identifiers`（有则列 `scheme:value`）。
+- 结果卡片回显后端**新给的字段**：`venue` + `venue_year`、`paper_type`、`volume(issue)`、`pages`、
+  `publication_date`，外加旧字段 `doi`（渲染成 `doi:...`）。**只在有值时出现**：存量论文这些列全是
+  NULL，卡片就退回原来的样子，不要渲染空行或占位符。
+  （检索结果里 paperbox 给的是 `doi` 字段，**不是** `identifiers` 映射 —— 别照抄 `GET /api/papers` 的形状。）
 - 界面必须写清：**这组过滤读的是索引快照**，改完元数据要跑 paperbox 的
   `scripts/refresh_index_metadata.py` 或对该论文 reindex 才生效；`GET /api/ui/papers` 那套
   （Tab 2 的过滤）读的是 PostgreSQL 当前值。两条路径不要混为一谈。

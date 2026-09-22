@@ -200,6 +200,9 @@
     else if (issue) parts.push("(" + issue + ")");
     if (!isBlank(result.pages)) parts.push("pp. " + String(result.pages).trim());
     if (!isBlank(result.publication_date)) parts.push(String(result.publication_date).trim());
+    /* 检索结果里 paperbox 给的是**旧字段** `doi`（不是 identifiers 映射），有就带上：
+     * 存量论文的 venue/卷期页全是 NULL，DOI 常常是这张卡片上唯一的标识符。 */
+    if (!isBlank(result.doi)) parts.push("doi:" + String(result.doi).trim());
     return parts;
   }
 

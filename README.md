@@ -67,7 +67,7 @@ uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088
 以及作者 / 期刊 / DOI / arXiv / 标签过滤。展开「更多过滤」还有 2026-09-22 后端新增的
 **会议/期刊届（`venue_year`）/ 论文类型（`paper_type`，多选）/ 标识符（`scheme:value`）/
 四类索引词（`ieee_terms` / `author_terms` / `dynamic_index_terms` / `source_tags`）**。
-结果卡片给出标题、作者、年份、venue 与那一届、卷(期)、页码、发表日期、
+结果卡片给出标题、作者、年份、venue 与那一届、卷(期)、页码、发表日期、DOI（有值才显示这一行）、
 score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low），
 并列出 evidence 片段（页码 + 章节 + 文本，可展开），顶部显示命中论文数、耗时与生效的过滤项数。
 
