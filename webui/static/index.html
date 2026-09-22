@@ -233,13 +233,43 @@
       <section class="panel" id="panel-jobs" role="tabpanel">
         <form class="card toolbar" id="jobs-form">
           <label class="field">
-            <span>条数</span>
-            <input type="number" id="jobs-limit" value="20" min="1" max="200" />
+            <span>阶段</span>
+            <select id="jobs-stage">
+              <option value="" selected>全部</option>
+              <option value="QUEUED">QUEUED 排队中</option>
+              <option value="RECEIVED">RECEIVED 已接收</option>
+              <option value="DOWNLOADING">DOWNLOADING 下载中</option>
+              <option value="STORED">STORED 已存储</option>
+              <option value="PARSING">PARSING 解析中</option>
+              <option value="CHUNKING">CHUNKING 切块中</option>
+              <option value="EMBEDDING">EMBEDDING 向量化中</option>
+              <option value="INDEXING">INDEXING 建索引中</option>
+              <option value="COMPLETED">COMPLETED 已完成</option>
+              <option value="FAILED">FAILED 失败</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>论文 ID</span>
+            <input type="text" id="jobs-paper" placeholder="paper_id（可选）" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>每页条数</span>
+            <select id="jobs-limit">
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
           </label>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary" id="btn-jobs-refresh">刷新</button>
             <label class="check"><input type="checkbox" id="jobs-auto" /> 每 5 秒自动刷新</label>
           </div>
+          <p class="muted jobs-hint">
+            服务端分页（<code>limit</code> + <code>offset</code>，总数取自后端的 <code>total</code>）；
+            阶段过滤由 paperbox 校验，写错的阶段名会回 422 而不是空列表。失败作业可直接「重试」。
+          </p>
         </form>
 
         <div class="card table-wrap">
@@ -247,17 +277,28 @@
             <thead>
               <tr>
                 <th>job_id</th>
-                <th>stage</th>
+                <th>阶段</th>
                 <th>进度</th>
                 <th>重复</th>
-                <th>错误信息</th>
-                <th>创建时间</th>
-                <th>更新时间</th>
+                <th>错误</th>
+                <th>论文</th>
+                <th>创建</th>
+                <th>更新</th>
+                <th>完成</th>
+                <th>耗时</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody id="jobs-body"></tbody>
           </table>
           <p class="empty" id="jobs-empty" hidden>暂无任务。</p>
+        </div>
+
+        <div class="pager">
+          <button type="button" class="btn btn-ghost" id="jobs-prev">上一页</button>
+          <span id="jobs-page-info">第 1 / 1 页</span>
+          <button type="button" class="btn btn-ghost" id="jobs-next">下一页</button>
+          <span class="muted" id="jobs-total-info">共 0 条</span>
         </div>
       </section>
 
@@ -432,6 +473,7 @@
     <div class="toast-stack" id="toast-stack"></div>
 
     <script src="/static/search-logic.js"></script>
+    <script src="/static/jobs-logic.js"></script>
     <script src="/static/queue-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>

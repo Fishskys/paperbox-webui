@@ -8,6 +8,8 @@
   /* 检索过滤器的纯逻辑在 search-logic.js（同样先于本文件加载）：空值不发、
    * 标识符 scheme 校验、年份解析都在那里，并被 node:test 真测。 */
   var SL = window.PaperboxSearch;
+  /* 任务列表的纯逻辑在 jobs-logic.js：分页换算与耗时文案在那里，并被 node:test 真测。 */
+  var JL = window.PaperboxJobs;
 
   var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
@@ -1532,36 +1534,145 @@
     if (queueAddUrl(url)) $("ingest-url").value = "";
   }
 
-  /* ---------------- Tab 4：任务 ---------------- */
+  /* ---------------- Tab 4：任务（服务端分页 + 失败重试） ---------------- */
+
+  function jobsLimit() {
+    return Number($("jobs-limit").value) || 20;
+  }
+
+  /* 耗时：规则在 jobs-logic.js（有 finished_at 才算得出来，否则是"进行中"）。 */
+  function jobDuration(job) {
+    return JL.durationText(job);
+  }
+
+  function stageChip(stage) {
+    var cls = "chip-info";
+    if (stage === "COMPLETED") cls = "chip-ok";
+    else if (stage === "FAILED") cls = "chip-error";
+    else if (stage) cls = "chip-pending";
+    var chip = el("span", cls, stageLabel(stage));
+    if (stage) chip.title = stage;
+    return chip;
+  }
+
+  function progressBar(value) {
+    var percent = typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
+    var wrap = el("div", "progress-wrap");
+    var bar = el("div", "progress-bar");
+    // 复用队列进度条的样式（`.progress-bar span` 就是填充块）
+    var fill = el("span");
+    fill.style.width = percent.toFixed(1) + "%";
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+    wrap.appendChild(el("span", "progress-text", fmtProgress(value)));
+    return wrap;
+  }
+
+  function copyText(value) {
+    if (!value) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(
+        function () {
+          toast("已复制 " + value, "info");
+        },
+        function () {
+          toast("复制失败：" + value, "warn");
+        }
+      );
+      return;
+    }
+    toast(value, "info");
+  }
 
   function renderJobRow(job) {
     var tr = el("tr");
+
     var idCell = el("td", "cell-id");
-    idCell.appendChild(el("code", null, text(job.job_id, "—")));
+    var code = el("code", "copyable", text(job.job_id, "—"));
+    code.title = "点击复制 job_id";
+    code.addEventListener("click", function () {
+      copyText(job.job_id);
+    });
+    idCell.appendChild(code);
     tr.appendChild(idCell);
 
     var stageCell = el("td");
-    var label = stageLabel(job.stage);
-    var cls = "chip chip-info";
-    if (job.stage === "COMPLETED") cls = "chip chip-ok";
-    else if (job.stage === "FAILED") cls = "chip chip-error";
-    else if (job.stage) cls = "chip chip-pending";
-    stageCell.appendChild(el("span", cls.replace("chip ", ""), label));
+    stageCell.appendChild(stageChip(job.stage));
     tr.appendChild(stageCell);
 
-    tr.appendChild(el("td", null, fmtProgress(job.progress)));
+    var progressCell = el("td");
+    progressCell.appendChild(progressBar(job.progress));
+    tr.appendChild(progressCell);
+
     tr.appendChild(el("td", null, job.duplicate ? "是" : "否"));
-    tr.appendChild(el("td", "cell-error", text(job.error_message, "—")));
+
+    var errorCell = el("td", "cell-error");
+    if (job.error_code) errorCell.appendChild(el("span", "badge badge-error", job.error_code));
+    errorCell.appendChild(el("span", null, text(job.error_message, job.error_code ? "" : "—")));
+    tr.appendChild(errorCell);
+
+    var paperCell = el("td", "cell-id");
+    if (job.paper_id) {
+      var link = el("button", "link-title", "打开");
+      link.type = "button";
+      link.addEventListener("click", function () {
+        openDetail(job.paper_id);
+      });
+      paperCell.appendChild(link);
+      var paperCode = el("code", "muted copyable", job.paper_id);
+      paperCode.title = "点击复制 paper_id";
+      paperCode.addEventListener("click", function () {
+        copyText(job.paper_id);
+      });
+      paperCell.appendChild(paperCode);
+    } else {
+      paperCell.appendChild(el("span", "muted", "—"));
+    }
+    tr.appendChild(paperCell);
+
     tr.appendChild(el("td", null, fmtTime(job.created_at)));
     tr.appendChild(el("td", null, fmtTime(job.updated_at)));
+    tr.appendChild(el("td", null, fmtTime(job.finished_at)));
+    tr.appendChild(el("td", null, jobDuration(job)));
+
+    var actionCell = el("td", "cell-actions");
+    if (job.stage === "FAILED") {
+      var retry = el("button", "btn btn-ghost btn-sm", "重试");
+      retry.type = "button";
+      retry.addEventListener("click", function () {
+        retryJob(job.job_id, retry);
+      });
+      actionCell.appendChild(retry);
+    } else {
+      actionCell.appendChild(el("span", "muted", "—"));
+    }
+    tr.appendChild(actionCell);
     return tr;
   }
 
+  function paintJobsPager() {
+    var pager = JL.pagerState({
+      total: state.jobs.total,
+      limit: state.jobs.limit || jobsLimit(),
+      offset: state.jobs.offset
+    });
+    $("jobs-page-info").textContent = pager.label;
+    $("jobs-total-info").textContent = pager.totalLabel;
+    $("jobs-prev").disabled = !pager.canPrev;
+    $("jobs-next").disabled = !pager.canNext;
+  }
+
   function loadJobs() {
-    var limit = Number($("jobs-limit").value) || 20;
+    var limit = jobsLimit();
+    var stage = $("jobs-stage").value;
+    var paperId = $("jobs-paper").value.trim();
+    var offset = Math.max(0, state.jobs.offset || 0);
     var body = $("jobs-body");
     var empty = $("jobs-empty");
-    return api("/api/ui/jobs?limit=" + encodeURIComponent(limit))
+    var url = "/api/ui/jobs?limit=" + limit + "&offset=" + offset;
+    if (stage) url += "&stage=" + encodeURIComponent(stage);
+    if (paperId) url += "&paper_id=" + encodeURIComponent(paperId);
+    return api(url)
       .then(function (data) {
         var jobs = Array.isArray(data.jobs) ? data.jobs : [];
         clear(body);
@@ -1569,11 +1680,34 @@
           body.appendChild(renderJobRow(job));
         });
         empty.hidden = jobs.length > 0;
+        empty.textContent = "暂无任务。";
+        state.jobs.total = Number(data.total) || 0;
+        state.jobs.limit = Number(data.limit) || limit;
+        state.jobs.offset = Number(data.offset) || offset;
+        paintJobsPager();
       })
       .catch(function (error) {
         clear(body);
         empty.hidden = false;
         empty.textContent = "加载任务失败：" + error.message;
+        state.jobs.total = 0;
+        paintJobsPager();
+      });
+  }
+
+  function retryJob(jobId, button) {
+    if (!window.confirm("重试作业 " + jobId + "？只有 FAILED 的作业能重试。")) return;
+    button.disabled = true;
+    api("/api/ui/jobs/" + encodeURIComponent(jobId) + "/retry", { method: "POST" })
+      .then(function (job) {
+        toast("已重试：" + stageLabel(job.stage), "info");
+        loadJobs();
+      })
+      .catch(function (error) {
+        toast("重试失败：" + error.message, "error");
+      })
+      .then(function () {
+        button.disabled = false;
       });
   }
 
@@ -2207,6 +2341,27 @@
 
     $("jobs-form").addEventListener("submit", function (event) {
       event.preventDefault();
+      state.jobs.offset = 0;
+      loadJobs();
+    });
+    $("jobs-stage").addEventListener("change", function () {
+      state.jobs.offset = 0;
+      loadJobs();
+    });
+    $("jobs-paper").addEventListener("change", function () {
+      state.jobs.offset = 0;
+      loadJobs();
+    });
+    $("jobs-limit").addEventListener("change", function () {
+      state.jobs.offset = 0;
+      loadJobs();
+    });
+    $("jobs-prev").addEventListener("click", function () {
+      state.jobs.offset = JL.nextOffset(state.jobs.offset, jobsLimit(), "prev");
+      loadJobs();
+    });
+    $("jobs-next").addEventListener("click", function () {
+      state.jobs.offset = JL.nextOffset(state.jobs.offset, jobsLimit(), "next");
       loadJobs();
     });
     $("jobs-auto").addEventListener("change", toggleJobsAuto);
