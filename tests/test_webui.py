@@ -1244,3 +1244,112 @@ def test_search_logic_passes_the_node_tests() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fail 0" in result.stdout, result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Tab 5: 一致性 / Tab 6: 元数据 (2026-09-23)
+# --------------------------------------------------------------------------- #
+
+
+def test_index_shell_exposes_the_consistency_tab() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    assert 'data-tab="consistency"' in html
+    for marker in (
+        "panel-consistency",
+        "consistency-limit",
+        "consistency-totals",
+        "consistency-errors",
+        "consistency-body",
+        "consistency-empty",
+        "consistency-orphans-card",
+        "consistency-orphans",
+        "btn-consistency-run",
+        "consistency-auto",
+    ):
+        assert f'id="{marker}"' in html, marker
+    # totals 精确、条目可截断这两件事必须写在界面上，否则会被读成 bug
+    assert "不受「问题条目上限」影响" in html
+
+
+def test_index_shell_exposes_the_metadata_tab() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    assert 'data-tab="metadata"' in html
+    for marker in (
+        "panel-metadata",
+        "metadata-source-type",
+        "metadata-limit",
+        "metadata-file",
+        "metadata-json",
+        "btn-metadata-dry-run",
+        "btn-metadata-apply",
+        "metadata-report-totals",
+        "metadata-report-summary",
+        "metadata-sources-body",
+        "metadata-conflicts-body",
+        "metadata-review-body",
+        "metadata-review-only-ambiguous",
+        "btn-metadata-review",
+        "metadata-apply-mode",
+        "metadata-apply-entries",
+        "btn-metadata-prefill",
+        "btn-metadata-apply-run",
+    ):
+        assert f'id="{marker}"' in html, marker
+    # 默认 dry_run 是契约的一部分，界面必须写清
+    assert "试运行是默认" in html
+
+
+def test_app_js_implements_the_consistency_tab() -> None:
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in (
+        "loadConsistency",
+        "toggleConsistencyAuto",
+        "renderConsistencyRow",
+        "renderOrphans",
+        "paintTotals",
+        "ISSUE_LABELS",
+        "/api/ui/consistency",
+    ):
+        assert symbol in body, symbol
+    # 七个 issue 码都要有中文标签（否则表格里会出现英文码）
+    for code in (
+        "missing_object",
+        "orphan_object",
+        "missing_chunks",
+        "missing_index",
+        "orphan_index",
+        "chunk_count_mismatch",
+        "deleted_paper_residue",
+    ):
+        assert code in body, code
+
+
+def test_app_js_implements_the_metadata_tab() -> None:
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+
+    for symbol in (
+        "runMetadataImport",
+        "renderMetadataReport",
+        "loadMetadataReview",
+        "attachMetadataSource",
+        "prefillApplyEntries",
+        "runMetadataApply",
+        "/api/ui/metadata/import",
+        "/api/ui/metadata/review",
+        "/api/ui/metadata/apply",
+        "/metadata/sources/",
+        "dry_run",
+    ):
+        assert symbol in body, symbol
+    # multipart 字段名必须是 file（paperbox 的契约），且不手写 Content-Type
+    assert 'form.append("file"' in body
+    assert "new FormData()" in body
+    # 两个写操作都要二次确认
+    assert "window.confirm" in body
