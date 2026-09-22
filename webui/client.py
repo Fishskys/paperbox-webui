@@ -162,18 +162,90 @@ class PaperboxClient:
         )
 
     async def list_jobs(
-        self, limit: int | None = None, paper_id: str | None = None
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        stage: str | None = None,
+        paper_id: str | None = None,
     ) -> PaperboxResponse:
+        """``GET /api/jobs`` with the page window and the optional filters.
+
+        paperbox echoes ``limit``/``offset``/``stage`` and the *filtered* ``total``
+        back, so the job tab can page server-side (2026-09-23 contract).
+        """
         return await self._request(
-            "GET", "/api/jobs", params={"limit": limit, "paper_id": paper_id}
+            "GET",
+            "/api/jobs",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "stage": stage,
+                "paper_id": paper_id,
+            },
         )
 
     async def get_job(self, job_id: str) -> PaperboxResponse:
         return await self._request("GET", f"/api/jobs/{job_id}")
 
+    async def retry_job(self, job_id: str) -> PaperboxResponse:
+        """Re-drive a FAILED job; paperbox answers 409 for anything else."""
+        return await self._request("POST", f"/api/jobs/{job_id}/retry")
+
     async def job_queue(self) -> PaperboxResponse:
         """In-process ingestion queue depth (``GET /api/jobs/queue``)."""
         return await self._request("GET", "/api/jobs/queue")
+
+    async def consistency(self, limit: int | None = None) -> PaperboxResponse:
+        """Three-way drift report (``GET /api/consistency``, read-only)."""
+        return await self._request("GET", "/api/consistency", params={"limit": limit})
+
+    async def import_metadata(
+        self,
+        *,
+        params: dict[str, Any] | None = None,
+        file: tuple[str, Any, str] | None = None,
+        payload: Any = None,
+    ) -> PaperboxResponse:
+        """``POST /api/metadata/import``: multipart file *or* JSON body.
+
+        ``file`` is ``(filename, fileobj, content_type)`` and is handed to httpx
+        untouched, so a big record set is streamed rather than buffered here.
+        """
+        if file is not None:
+            return await self._request(
+                "POST",
+                "/api/metadata/import",
+                params=params,
+                files={"file": file},
+                timeout=self.settings.ingest_timeout,
+            )
+        return await self._request(
+            "POST",
+            "/api/metadata/import",
+            params=params,
+            json={} if payload is None else payload,
+            timeout=self.settings.ingest_timeout,
+        )
+
+    async def metadata_review(
+        self, status: list[str] | None = None, limit: int | None = None
+    ) -> PaperboxResponse:
+        """``GET /api/metadata/review`` (records awaiting a human decision)."""
+        return await self._request(
+            "GET", "/api/metadata/review", params={"status": status, "limit": limit}
+        )
+
+    async def attach_source(self, source_id: str, paper_id: str) -> PaperboxResponse:
+        """``POST /api/metadata/sources/{id}/attach`` -- the human answer."""
+        return await self._request(
+            "POST",
+            f"/api/metadata/sources/{source_id}/attach",
+            json={"paper_id": paper_id},
+        )
+
+    async def apply_metadata(self, payload: dict[str, Any]) -> PaperboxResponse:
+        """``POST /api/metadata/apply`` -- replay a report's decisions."""
+        return await self._request("POST", "/api/metadata/apply", json=payload)
 
     async def ingest_url(self, url: str) -> PaperboxResponse:
         return await self._request(
