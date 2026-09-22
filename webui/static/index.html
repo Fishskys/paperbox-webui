@@ -29,6 +29,8 @@
       <button type="button" class="tab" role="tab" data-tab="library" aria-selected="false">论文库</button>
       <button type="button" class="tab" role="tab" data-tab="ingest" aria-selected="false">导入</button>
       <button type="button" class="tab" role="tab" data-tab="jobs" aria-selected="false">任务</button>
+      <button type="button" class="tab" role="tab" data-tab="consistency" aria-selected="false">一致性</button>
+      <button type="button" class="tab" role="tab" data-tab="metadata" aria-selected="false">元数据</button>
     </nav>
 
     <main class="panels">
@@ -256,6 +258,163 @@
             <tbody id="jobs-body"></tbody>
           </table>
           <p class="empty" id="jobs-empty" hidden>暂无任务。</p>
+        </div>
+      </section>
+
+      <!-- Tab 5: 一致性（PG / MinIO / OpenSearch 三端只读对账） -->
+      <section class="panel" id="panel-consistency" role="tabpanel">
+        <form class="card toolbar" id="consistency-form">
+          <label class="field">
+            <span>问题条目上限</span>
+            <input type="number" id="consistency-limit" value="200" min="1" max="1000" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-consistency-run">开始检查</button>
+            <label class="check"><input type="checkbox" id="consistency-auto" /> 每 30 秒自动检查</label>
+          </div>
+          <p class="muted consistency-hint">
+            只读对账，不写任何一端：逐个论文核对「文件行 ↔ MinIO 对象」与「chunk 行 ↔ 索引文档」，
+            再列出 store 级孤儿。某个 store 连不上时它会出现在下面的「errors」里，另外两端照常给结论。
+            总数（totals）永远精确，不受「问题条目上限」影响。
+          </p>
+        </form>
+
+        <div class="card">
+          <h2>对账结论 <span class="muted" id="consistency-summary">尚未检查</span></h2>
+          <div class="totals-grid" id="consistency-totals"></div>
+          <div class="errors-strip" id="consistency-errors" hidden></div>
+          <p class="muted" id="consistency-truncated" hidden></p>
+        </div>
+
+        <div class="card table-wrap">
+          <h2>不一致的论文 <span class="muted" id="consistency-problems-count">（0）</span></h2>
+          <table class="table" id="consistency-table">
+            <thead>
+              <tr>
+                <th>论文</th>
+                <th>状态</th>
+                <th>文件 PG ↔ MinIO</th>
+                <th>chunks PG ↔ OS</th>
+                <th>问题</th>
+                <th>缺失对象</th>
+                <th>孤儿对象</th>
+              </tr>
+            </thead>
+            <tbody id="consistency-body"></tbody>
+          </table>
+          <p class="empty" id="consistency-empty" hidden>没有不一致的论文。</p>
+        </div>
+
+        <div class="card" id="consistency-orphans-card" hidden>
+          <h2>store 级孤儿</h2>
+          <div class="orphan-cols" id="consistency-orphans"></div>
+        </div>
+      </section>
+
+      <!-- Tab 6: 元数据（导入 / 复核 / 挂载 / 批量应用） -->
+      <section class="panel" id="panel-metadata" role="tabpanel">
+        <form class="card" id="metadata-import-form">
+          <h2>导入外部元数据</h2>
+          <div class="form-grid">
+            <label class="field">
+              <span>来源类型（source_type）</span>
+              <select id="metadata-source-type">
+                <option value="import_file" selected>import_file（外部文件导入）</option>
+                <option value="ieee_api">ieee_api</option>
+                <option value="crossref">crossref</option>
+                <option value="arxiv_api">arxiv_api</option>
+                <option value="manual">manual</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>记录条数上限（可选）</span>
+              <input type="number" id="metadata-limit" placeholder="不填=全部" min="1" />
+            </label>
+            <label class="field field-wide">
+              <span>记录文件（JSON：IEEE raw / CSL-JSON / 通用 JSON）</span>
+              <input type="file" id="metadata-file" accept=".json,application/json" />
+            </label>
+            <label class="field field-wide">
+              <span>或直接粘贴 JSON</span>
+              <textarea id="metadata-json" rows="6" placeholder='[{"title": "...", "doi": "10.xxxx/yyy"}]'></textarea>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-metadata-dry-run">试运行（不写库）</button>
+            <button type="button" class="btn btn-ghost" id="btn-metadata-apply">导入并应用</button>
+            <button type="reset" class="btn btn-ghost">清空</button>
+          </div>
+          <p class="muted">
+            <strong>试运行是默认</strong>：只匹配并报告，不落库。同一份记录重复导入会计入 unchanged（靠
+            <code>UNIQUE(source_type, source_ref)</code>），不会产生第二行来源。
+          </p>
+        </form>
+
+        <div class="card" id="metadata-report-card">
+          <h2>导入报告 <span class="muted" id="metadata-report-summary">尚未导入</span></h2>
+          <div class="totals-grid" id="metadata-report-totals"></div>
+          <div class="table-wrap">
+            <table class="table" id="metadata-sources-table">
+              <thead>
+                <tr><th>source_ref</th><th>来源类型</th><th>匹配状态</th><th>匹配方式</th><th>论文</th></tr>
+              </thead>
+              <tbody id="metadata-sources-body"></tbody>
+            </table>
+            <p class="empty" id="metadata-sources-empty" hidden>报告里没有来源明细。</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="metadata-conflicts-table">
+              <thead>
+                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th></tr>
+              </thead>
+              <tbody id="metadata-conflicts-body"></tbody>
+            </table>
+            <p class="empty" id="metadata-conflicts-empty" hidden>没有字段冲突。</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>复核清单 <span class="muted" id="metadata-review-summary">尚未加载</span></h2>
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-metadata-review">加载复核清单</button>
+            <label class="check">
+              <input type="checkbox" id="metadata-review-only-ambiguous" /> 只看 ambiguous
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="metadata-review-table">
+              <thead>
+                <tr><th>source_id</th><th>来源类型</th><th>source_ref</th><th>状态</th><th>挂到论文</th></tr>
+              </thead>
+              <tbody id="metadata-review-body"></tbody>
+            </table>
+            <p class="empty" id="metadata-review-empty" hidden>复核清单为空。</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>批量应用</h2>
+          <p class="muted">
+            把「哪份来源属于哪篇论文」的判定成批发给 paperbox（<code>POST /api/metadata/apply</code>）。
+            可以从上面报告的 source_ref 一键预填。
+          </p>
+          <div class="form-grid">
+            <label class="field">
+              <span>模式</span>
+              <select id="metadata-apply-mode">
+                <option value="fill" selected>fill（只填空）</option>
+                <option value="overwrite">overwrite（人工判定优先）</option>
+              </select>
+            </label>
+          </div>
+          <label class="field field-wide">
+            <span>entries（JSON 数组）</span>
+            <textarea id="metadata-apply-entries" rows="5" placeholder='[{"source_ref": "...", "paper_id": "..."}]'></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="btn-metadata-prefill">从报告预填 source_ref</button>
+            <button type="button" class="btn btn-danger" id="btn-metadata-apply-run">执行批量应用</button>
+          </div>
         </div>
       </section>
     </main>

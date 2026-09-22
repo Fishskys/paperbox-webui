@@ -12,6 +12,7 @@
   var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
   var JOBS_AUTO_MS = 5000;
+  var CONSISTENCY_AUTO_MS = 30000;
   var LIBRARY_PAGE_SIZE = 20;
 
   var STAGES = [
@@ -40,7 +41,10 @@
 
   var state = {
     library: { offset: 0, total: 0, loading: false },
+    jobs: { offset: 0, total: 0, limit: 20 },
     jobsAutoTimer: null,
+    consistencyTimer: null,
+    metadata: { report: null },
     config: null,
     serverQueued: null,     // paperbox 侧的排队深度（/api/ui/jobs/queue 的 queued）
     queue: {
@@ -198,6 +202,8 @@
     }
     if (name === "library") loadLibrary();
     if (name === "jobs") loadJobs();
+    if (name === "consistency") loadConsistency();
+    if (name === "metadata") loadMetadataReview();
   }
 
   /* ---------------- Tab 1：检索 ---------------- */
@@ -1583,6 +1589,553 @@
     }
   }
 
+  /* ---------------- Tab 5：一致性（三端只读对账） ---------------- */
+
+  var ISSUE_LABELS = {
+    missing_object: "缺对象",
+    orphan_object: "孤儿对象",
+    missing_chunks: "缺 chunk 行",
+    missing_index: "缺索引文档",
+    orphan_index: "孤儿索引文档",
+    chunk_count_mismatch: "chunk 数不符",
+    deleted_paper_residue: "删除残留"
+  };
+
+  var CONSISTENCY_TOTALS = [
+    ["papers", "论文（含已删）"],
+    ["papers_live", "存活论文"],
+    ["papers_deleted", "已删除"],
+    ["files_pg", "文件行(PG)"],
+    ["objects_minio", "对象(MinIO)"],
+    ["chunks_pg", "chunk 行(PG)"],
+    ["documents_os", "文档(OS)"],
+    ["staging_objects", "staging 残留"],
+    ["problems", "不一致论文"],
+    ["orphan_objects", "孤儿对象"],
+    ["orphan_documents", "孤儿文档"]
+  ];
+
+  function issueLabel(code) {
+    return ISSUE_LABELS[code] || code;
+  }
+
+  /* 一致性与元数据两个 Tab 共用的小格子（label → value）。 */
+  function paintTotals(node, labels, values) {
+    clear(node);
+    var data = values || {};
+    labels.forEach(function (pair) {
+      var cell = el("div", "totals-cell");
+      cell.appendChild(el("span", "totals-value", text(data[pair[0]], "—")));
+      cell.appendChild(el("span", "totals-label", pair[1]));
+      node.appendChild(cell);
+    });
+  }
+
+  function listCell(items) {
+    var td = el("td", "cell-list");
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      td.appendChild(el("span", "muted", "—"));
+      return td;
+    }
+    var ul = el("ul", "mini-list");
+    list.slice(0, 5).forEach(function (item) {
+      var li = el("li", null, item);
+      li.title = item;
+      ul.appendChild(li);
+    });
+    if (list.length > 5) ul.appendChild(el("li", "muted", "…共 " + list.length + " 项"));
+    td.appendChild(ul);
+    return td;
+  }
+
+  function renderConsistencyRow(row) {
+    var tr = el("tr");
+
+    var paperCell = el("td", "cell-id");
+    var title = el("button", "link-title", text(row.title, row.paper_id));
+    title.type = "button";
+    title.addEventListener("click", function () {
+      openDetail(row.paper_id);
+    });
+    paperCell.appendChild(title);
+    paperCell.appendChild(el("code", "muted", text(row.paper_id, "—")));
+    tr.appendChild(paperCell);
+
+    var statusCell = el("td");
+    statusCell.appendChild(el("span", "chip chip-info", text(row.status, "—")));
+    if (row.deleted) statusCell.appendChild(el("span", "chip chip-error", "已删除"));
+    tr.appendChild(statusCell);
+
+    tr.appendChild(
+      el(
+        "td",
+        row.files_pg === row.objects_minio ? null : "cell-error",
+        row.files_pg + " ↔ " + row.objects_minio
+      )
+    );
+    tr.appendChild(
+      el(
+        "td",
+        row.chunks_pg === row.chunks_os ? null : "cell-error",
+        row.chunks_pg + " ↔ " + row.chunks_os
+      )
+    );
+
+    var issueCell = el("td", "cell-issues");
+    var issues = Array.isArray(row.issues) ? row.issues : [];
+    issues.forEach(function (code) {
+      var badge = el("span", "chip chip-error", issueLabel(code));
+      badge.title = code;
+      issueCell.appendChild(badge);
+    });
+    if (!issues.length) issueCell.appendChild(el("span", "muted", "—"));
+    tr.appendChild(issueCell);
+
+    tr.appendChild(listCell(row.missing_objects));
+    tr.appendChild(listCell(row.orphan_objects));
+    return tr;
+  }
+
+  function renderOrphans(payload) {
+    var card = $("consistency-orphans-card");
+    var node = $("consistency-orphans");
+    clear(node);
+    var objects = Array.isArray(payload.orphan_objects) ? payload.orphan_objects : [];
+    var documents = Array.isArray(payload.orphan_documents) ? payload.orphan_documents : [];
+    if (!objects.length && !documents.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    [
+      ["MinIO 孤儿对象", objects],
+      ["OpenSearch 孤儿文档", documents]
+    ].forEach(function (pair) {
+      var column = el("div", "orphan-col");
+      column.appendChild(el("h3", null, pair[0] + "（" + pair[1].length + "）"));
+      if (!pair[1].length) {
+        column.appendChild(el("p", "muted", "无"));
+      } else {
+        var ul = el("ul", "mini-list");
+        pair[1].slice(0, 50).forEach(function (item) {
+          var li = el("li", null, item);
+          li.title = item;
+          ul.appendChild(li);
+        });
+        if (pair[1].length > 50) {
+          ul.appendChild(el("li", "muted", "…共 " + pair[1].length + " 项"));
+        }
+        column.appendChild(ul);
+      }
+      node.appendChild(column);
+    });
+  }
+
+  /* 检查是只读的，所以失败也只影响这个 Tab；errors[] 非空时**照样**显示结论
+   * （那是 paperbox 的语义：某个 store 连不上，另外两端照答）。 */
+  function loadConsistency() {
+    var limit = Number($("consistency-limit").value) || 200;
+    var summary = $("consistency-summary");
+    clear(summary);
+    summary.textContent = "检查中…";
+    return api("/api/ui/consistency?limit=" + encodeURIComponent(limit))
+      .then(function (data) {
+        var totals = data.totals || {};
+        paintTotals($("consistency-totals"), CONSISTENCY_TOTALS, totals);
+
+        clear(summary);
+        summary.appendChild(
+          el(
+            "span",
+            "chip " + (data.consistent ? "chip-ok" : "chip-error"),
+            data.consistent ? "一致" : "有漂移"
+          )
+        );
+        summary.appendChild(
+          el(
+            "span",
+            null,
+            " · " +
+              text(totals.problems, 0) +
+              " 篇不一致 · 索引 " +
+              text(data.index, "—") +
+              (data.index_exists ? "（存在）" : "（不存在）") +
+              " · 耗时 " +
+              (typeof data.took_ms === "number" ? data.took_ms.toFixed(1) : "—") +
+              " ms · 检查于 " +
+              text(data.checked_at, "—")
+          )
+        );
+
+        var errors = Array.isArray(data.errors) ? data.errors : [];
+        var strip = $("consistency-errors");
+        strip.hidden = errors.length === 0;
+        clear(strip);
+        if (errors.length) {
+          strip.appendChild(el("strong", null, "errors（该 store 未参与本次结论）"));
+          errors.forEach(function (item) {
+            strip.appendChild(el("div", null, item));
+          });
+        }
+
+        var truncated = $("consistency-truncated");
+        truncated.hidden = !data.truncated;
+        truncated.textContent = data.truncated
+          ? "问题条目被截断：只列出前 " + limit + " 条，总数以上面的「不一致论文」为准。"
+          : "";
+
+        var body = $("consistency-body");
+        clear(body);
+        var problems = Array.isArray(data.problems) ? data.problems : [];
+        problems.forEach(function (row) {
+          body.appendChild(renderConsistencyRow(row));
+        });
+        $("consistency-problems-count").textContent = "（" + problems.length + "）";
+        var empty = $("consistency-empty");
+        empty.hidden = problems.length > 0;
+        empty.textContent = "没有不一致的论文。";
+        renderOrphans(data);
+      })
+      .catch(function (error) {
+        clear(summary);
+        summary.appendChild(el("span", "chip chip-error", "检查失败"));
+        summary.appendChild(el("span", null, " · " + error.message));
+        var empty = $("consistency-empty");
+        empty.hidden = false;
+        empty.textContent = "一致性检查失败：" + error.message;
+      });
+  }
+
+  function toggleConsistencyAuto() {
+    if (state.consistencyTimer) {
+      window.clearInterval(state.consistencyTimer);
+      state.consistencyTimer = null;
+    }
+    if ($("consistency-auto").checked) {
+      state.consistencyTimer = window.setInterval(loadConsistency, CONSISTENCY_AUTO_MS);
+    }
+  }
+
+  /* ---------------- Tab 6：元数据（导入 / 复核 / 挂载 / 批量应用） ---------------- */
+
+  var METADATA_TOTALS = [
+    ["total", "记录总数"],
+    ["matched", "已匹配"],
+    ["created_shell", "新建壳论文"],
+    ["ambiguous", "歧义（待人工）"],
+    ["unmatched", "未匹配"],
+    ["unchanged", "无变化"]
+  ];
+
+  function valueText(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+
+  function matchChip(status) {
+    var value = (status || "").toLowerCase();
+    var cls = "chip chip-info";
+    if (value === "matched" || value === "attached") cls = "chip chip-ok";
+    else if (value === "ambiguous" || value === "pending") cls = "chip chip-pending";
+    else if (value === "unmatched" || value === "rejected") cls = "chip chip-error";
+    return el("span", cls, text(status, "—"));
+  }
+
+  /* 导入的请求体：优先文件（multipart，字段名 file），否则用粘贴的 JSON。
+   * 两者都由后端按 Content-Type 分支处理，前端不重排字段。 */
+  function metadataRequest() {
+    var input = $("metadata-file");
+    if (input.files && input.files.length) {
+      var form = new FormData();
+      form.append("file", input.files[0]);
+      return { options: { method: "POST", body: form }, label: input.files[0].name };
+    }
+    var pasted = $("metadata-json").value.trim();
+    if (!pasted) return { error: "请选择记录文件，或粘贴 JSON" };
+    try {
+      JSON.parse(pasted);
+    } catch (error) {
+      return { error: "粘贴的 JSON 解析失败：" + error.message };
+    }
+    return {
+      options: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: pasted
+      },
+      label: "粘贴的 JSON"
+    };
+  }
+
+  function runMetadataImport(apply) {
+    var prepared = metadataRequest();
+    if (prepared.error) {
+      toast(prepared.error, "warn");
+      return;
+    }
+    if (
+      apply &&
+      !window.confirm("「导入并应用」会写入数据库（新增来源记录 / 壳论文 / 字段声明）。确认继续？")
+    ) {
+      return;
+    }
+    var params =
+      "?dry_run=" + (apply ? "false" : "true") + "&apply=" + (apply ? "true" : "false");
+    var sourceType = $("metadata-source-type").value;
+    if (sourceType) params += "&source_type=" + encodeURIComponent(sourceType);
+    var limit = $("metadata-limit").value.trim();
+    if (limit) params += "&limit=" + encodeURIComponent(limit);
+
+    var summary = $("metadata-report-summary");
+    clear(summary);
+    summary.textContent = "导入中（" + prepared.label + "）…";
+    return api("/api/ui/metadata/import" + params, prepared.options)
+      .then(function (report) {
+        renderMetadataReport(report);
+        loadHealth();                    // 可能新建了壳论文，计数要跟上
+      })
+      .catch(function (error) {
+        clear(summary);
+        summary.appendChild(el("span", "chip chip-error", "导入失败"));
+        summary.appendChild(el("span", null, " · " + error.message));
+      });
+  }
+
+  function renderMetadataReport(report) {
+    state.metadata.report = report;
+    paintTotals($("metadata-report-totals"), METADATA_TOTALS, report);
+
+    var summary = $("metadata-report-summary");
+    clear(summary);
+    summary.appendChild(
+      el(
+        "span",
+        "chip " + (report.dry_run ? "chip-pending" : "chip-ok"),
+        report.dry_run ? "试运行（未写库）" : "已写入"
+      )
+    );
+    summary.appendChild(el("span", null, " · 格式 " + text(report.format, "—")));
+
+    var sources = Array.isArray(report.sources) ? report.sources : [];
+    var sourceBody = $("metadata-sources-body");
+    clear(sourceBody);
+    sources.forEach(function (item) {
+      var tr = el("tr");
+      var refCell = el("td", "cell-id");
+      refCell.appendChild(el("code", null, text(item.source_ref, "—")));
+      tr.appendChild(refCell);
+      tr.appendChild(el("td", null, text(item.source_type, "—")));
+      var statusCell = el("td");
+      statusCell.appendChild(matchChip(item.match_status));
+      tr.appendChild(statusCell);
+      tr.appendChild(el("td", null, text(item.match_method, "—")));
+      var paperCell = el("td", "cell-id");
+      if (item.paper_id) {
+        var link = el("button", "link-title", "打开");
+        link.type = "button";
+        link.addEventListener("click", function () {
+          openDetail(item.paper_id);
+        });
+        paperCell.appendChild(link);
+        paperCell.appendChild(el("code", "muted", item.paper_id));
+      } else {
+        paperCell.appendChild(el("span", "muted", text(item.note, "—")));
+      }
+      tr.appendChild(paperCell);
+      sourceBody.appendChild(tr);
+    });
+    $("metadata-sources-empty").hidden = sources.length > 0;
+
+    var conflicts = Array.isArray(report.conflicts) ? report.conflicts : [];
+    var conflictBody = $("metadata-conflicts-body");
+    clear(conflictBody);
+    conflicts.forEach(function (item) {
+      conflictBody.appendChild(renderConflictRow(item));
+    });
+    $("metadata-conflicts-empty").hidden = conflicts.length > 0;
+  }
+
+  function renderConflictRow(item) {
+    var tr = el("tr");
+    var paperCell = el("td", "cell-id");
+    if (item.paper_id) {
+      var link = el("button", "link-title", "打开");
+      link.type = "button";
+      link.addEventListener("click", function () {
+        openDetail(item.paper_id);
+      });
+      paperCell.appendChild(link);
+      paperCell.appendChild(el("code", "muted", item.paper_id));
+    } else {
+      paperCell.appendChild(el("span", "muted", "—"));
+    }
+    tr.appendChild(paperCell);
+    tr.appendChild(el("td", null, text(item.field, "—")));
+    tr.appendChild(el("td", "cell-error", valueText(item.kept)));
+    tr.appendChild(el("td", null, valueText(item.rejected)));
+    return tr;
+  }
+
+  function loadMetadataReview() {
+    var only = $("metadata-review-only-ambiguous").checked;
+    var url = "/api/ui/metadata/review?limit=50" + (only ? "&status=ambiguous" : "");
+    var summary = $("metadata-review-summary");
+    clear(summary);
+    summary.textContent = "加载中…";
+    return api(url)
+      .then(function (payload) {
+        var items = Array.isArray(payload.items) ? payload.items : [];
+        clear(summary);
+        summary.textContent =
+          "待人工 " + text(payload.total, items.length) + " 条 · 字段冲突 " +
+          (Array.isArray(payload.conflicts) ? payload.conflicts.length : 0) + " 条";
+
+        var body = $("metadata-review-body");
+        clear(body);
+        items.forEach(function (item) {
+          body.appendChild(renderReviewRow(item));
+        });
+        var empty = $("metadata-review-empty");
+        empty.hidden = items.length > 0;
+        empty.textContent = "复核清单为空。";
+
+        var conflictBody = $("metadata-conflicts-body");
+        var conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        if (conflicts.length) {
+          clear(conflictBody);
+          conflicts.forEach(function (item) {
+            conflictBody.appendChild(renderConflictRow(item));
+          });
+          $("metadata-conflicts-empty").hidden = true;
+        }
+      })
+      .catch(function (error) {
+        clear(summary);
+        summary.appendChild(el("span", "chip chip-error", "加载失败"));
+        summary.appendChild(el("span", null, " · " + error.message));
+      });
+  }
+
+  function renderReviewRow(item) {
+    var tr = el("tr");
+    var idCell = el("td", "cell-id");
+    idCell.appendChild(el("code", null, text(item.source_id, "—")));
+    tr.appendChild(idCell);
+    tr.appendChild(el("td", null, text(item.source_type, "—")));
+
+    var refCell = el("td", "cell-id");
+    refCell.appendChild(el("code", null, text(item.source_ref, "—")));
+    tr.appendChild(refCell);
+
+    var statusCell = el("td");
+    statusCell.appendChild(matchChip(item.match_status));
+    tr.appendChild(statusCell);
+
+    var actionCell = el("td", "cell-actions");
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "inline-input";
+    input.placeholder = "paper_id";
+    input.setAttribute("aria-label", "paper_id");
+    var button = el("button", "btn btn-ghost btn-sm", "挂载");
+    button.type = "button";
+    button.addEventListener("click", function () {
+      attachMetadataSource(item.source_id, input.value.trim(), button);
+    });
+    actionCell.appendChild(input);
+    actionCell.appendChild(button);
+    tr.appendChild(actionCell);
+    return tr;
+  }
+
+  function attachMetadataSource(sourceId, paperId, button) {
+    if (!paperId) {
+      toast("请填写要挂载到的 paper_id", "warn");
+      return;
+    }
+    button.disabled = true;
+    api("/api/ui/metadata/sources/" + encodeURIComponent(sourceId) + "/attach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paper_id: paperId })
+    })
+      .then(function (result) {
+        var merged = Array.isArray(result.merged_fields) ? result.merged_fields : [];
+        toast("已挂载：" + (merged.length ? "合并 " + merged.join("、") : "没有需要合并的字段"), "info");
+        loadMetadataReview();
+      })
+      .catch(function (error) {
+        toast("挂载失败：" + error.message, "error");
+      })
+      .then(function () {
+        button.disabled = false;
+      });
+  }
+
+  /* 批量应用：把报告里的 source_ref 预填成 entries 模板，人工填 paper_id。
+   * overwrite 会按「人工判定优先」覆盖已有值，所以单独二次确认。 */
+  function prefillApplyEntries() {
+    var report = state.metadata.report;
+    var sources = report && Array.isArray(report.sources) ? report.sources : [];
+    if (!sources.length) {
+      toast("先做一次导入（试运行即可），报告里才有 source_ref", "warn");
+      return;
+    }
+    var entries = sources.map(function (item) {
+      return {
+        source_ref: item.source_ref,
+        source_type: $("metadata-source-type").value || undefined,
+        paper_id: item.paper_id || ""
+      };
+    });
+    $("metadata-apply-entries").value = JSON.stringify(entries, null, 2);
+    toast("已预填 " + entries.length + " 条，请补齐 paper_id", "info");
+  }
+
+  function runMetadataApply() {
+    var text = $("metadata-apply-entries").value.trim();
+    if (!text) {
+      toast("请先填 entries（可从报告预填）", "warn");
+      return;
+    }
+    var entries;
+    try {
+      entries = JSON.parse(text);
+    } catch (error) {
+      toast("entries 不是合法 JSON：" + error.message, "warn");
+      return;
+    }
+    if (!Array.isArray(entries) || !entries.length) {
+      toast("entries 必须是非空数组", "warn");
+      return;
+    }
+    var mode = $("metadata-apply-mode").value;
+    if (mode === "overwrite" && !window.confirm("overwrite 会以人工判定覆盖已有值，确认执行？")) {
+      return;
+    }
+    api("/api/ui/metadata/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: entries, mode: mode })
+    })
+      .then(function (result) {
+        var errors = Array.isArray(result.errors) ? result.errors : [];
+        toast(
+          "已应用 " + text(result.applied, 0) + " 条 · 跳过 " + text(result.skipped, 0) +
+            (errors.length ? " · 错误 " + errors.length + " 条（见控制台）" : ""),
+          errors.length ? "warn" : "info"
+        );
+        if (errors.length && window.console) window.console.warn("metadata apply errors", errors);
+        loadMetadataReview();
+        loadHealth();
+      })
+      .catch(function (error) {
+        toast("批量应用失败：" + error.message, "error");
+      });
+  }
+
   /* ---------------- 绑定 ---------------- */
 
   function bind() {
@@ -1657,6 +2210,28 @@
       loadJobs();
     });
     $("jobs-auto").addEventListener("change", toggleJobsAuto);
+
+    $("consistency-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      loadConsistency();
+    });
+    $("consistency-auto").addEventListener("change", toggleConsistencyAuto);
+
+    $("metadata-import-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      runMetadataImport(false);
+    });
+    $("btn-metadata-apply").addEventListener("click", function () {
+      runMetadataImport(true);
+    });
+    $("btn-metadata-review").addEventListener("click", function () {
+      loadMetadataReview();
+    });
+    $("metadata-review-only-ambiguous").addEventListener("change", function () {
+      loadMetadataReview();
+    });
+    $("btn-metadata-prefill").addEventListener("click", prefillApplyEntries);
+    $("btn-metadata-apply-run").addEventListener("click", runMetadataApply);
 
     $("btn-refresh-health").addEventListener("click", function () {
       loadHealth();
