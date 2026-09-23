@@ -12,3 +12,9 @@ codex_*.log
 
 # 本地界面截图，不随仓库发布
 docs/screenshots/
+
+# uv 的仓库内缓存 / Windows 垃圾文件
+.uvcache/
+Thumbs.db
+desktop.ini
+.DS_Store
