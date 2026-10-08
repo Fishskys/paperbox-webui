@@ -282,6 +282,34 @@ class PaperboxClient:
             timeout=self.settings.ingest_timeout,
         )
 
+    async def ingest_dir(self, payload: dict[str, Any]) -> PaperboxResponse:
+        """``POST /api/papers/ingest/dir``：让 paperbox 自己走目录（不走上传）。
+
+        端点只在 ``INGEST_LOCAL_ROOTS`` 非空时存在（否则 404），root 必须在白名单内
+        （否则 403）——两种失败都靠 :func:`deps.passthrough` 原文透传。
+        """
+        return await self._request(
+            "POST",
+            "/api/papers/ingest/dir",
+            json=payload,
+            timeout=self.settings.ingest_timeout,
+        )
+
+    async def ingest_compressed(
+        self, filename: str, handle: Any, content_type: str | None = None
+    ) -> PaperboxResponse:
+        """``POST /api/papers/ingest/compressed``：上传 zip，paperbox 逐个解包入库。
+
+        ``handle`` 直接交给 httpx 流式发送（同 :meth:`ingest_files`），
+        所以这里同样不会把整个压缩包读进进程内存。
+        """
+        return await self._request(
+            "POST",
+            "/api/papers/ingest/compressed",
+            files={"file": (filename, handle, content_type or "application/zip")},
+            timeout=self.settings.ingest_timeout,
+        )
+
     async def search(self, payload: dict[str, Any]) -> PaperboxResponse:
         return await self._request("POST", "/api/search", json=payload)
 

@@ -1538,6 +1538,108 @@
     if (queueAddUrl(url)) $("ingest-url").value = "";
   }
 
+  /* ---------------- 导入：目录（服务端路径）与 zip 批量 ---------------- */
+
+  /* 报告用 totals-grid 的同一套格子显示，键名与 paperbox 的响应字段一一对应。 */
+  var DIR_REPORT_FIELDS = [
+    ["matched", "匹配"],
+    ["accepted", "已接收"],
+    ["duplicate", "重复"],
+    ["rejected", "被拒"],
+    ["skipped", "超出上限未处理"]
+  ];
+  var ZIP_REPORT_FIELDS = [
+    ["entries_total", "包内文件"],
+    ["entries_ignored", "非 PDF 跳过"],
+    ["entries_rejected", "安全/超限被拒"],
+    ["accepted", "已接收"],
+    ["duplicate", "重复"],
+    ["rejected", "被拒"]
+  ];
+
+  function renderReport(containerId, fields, data) {
+    var box = $(containerId);
+    clear(box);
+    box.hidden = false;
+    var grid = el("div", "totals-grid");
+    box.appendChild(grid);
+    paintTotals(grid, fields, data);
+    var message = data && data.message ? String(data.message) : "";
+    if (message) box.appendChild(el("p", "muted", message));
+    if (data && data.dry_run) box.appendChild(el("p", "muted", "试运行：没有创建任何作业。"));
+    var jobs = data && Array.isArray(data.jobs) ? data.jobs : [];
+    if (jobs.length) {
+      var list = el("ul", "mini-list");
+      jobs.slice(0, 30).forEach(function (job) {
+        list.appendChild(
+          el("li", null, (job.relative || job.filename || "?") + " → " + (job.status || job.job_id || ""))
+        );
+      });
+      if (jobs.length > 30) list.appendChild(el("li", null, "…另有 " + (jobs.length - 30) + " 项"));
+      box.appendChild(el("h3", null, "作业"));
+      box.appendChild(list);
+    }
+  }
+
+  function dirRequestPayload() {
+    return {
+      root: $("dir-root").value.trim(),
+      glob: $("dir-glob").value.trim() || "**/*.pdf",
+      recursive: $("dir-recursive").checked,
+      limit: Number($("dir-limit").value) || 2000,
+      dry_run: $("dir-dry-run").checked
+    };
+  }
+
+  function runDirIngest() {
+    var payload = dirRequestPayload();
+    if (!payload.root) {
+      toast("请填写 paperbox 机器上的目录", "warn");
+      return;
+    }
+    api("/api/ui/ingest/dir", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (data) {
+        renderReport("dir-report", DIR_REPORT_FIELDS, data || {});
+        toast(
+          "扫描完成：接收 " + text((data || {}).accepted, "0") + " 篇",
+          ((data || {}).rejected || 0) > 0 ? "warn" : "ok"
+        );
+      })
+      .catch(function (error) {
+        toast(error.message, "error");
+      });
+  }
+
+  function zipRequestFile() {
+    var input = $("zip-file-input");
+    return input.files && input.files.length ? input.files[0] : null;
+  }
+
+  function runZipIngest() {
+    var file = zipRequestFile();
+    if (!file) {
+      toast("先选一个 zip", "warn");
+      return;
+    }
+    var form = new FormData();
+    form.append("file", file, file.name);
+    api("/api/ui/ingest/compressed", { method: "POST", body: form })
+      .then(function (data) {
+        renderReport("zip-report", ZIP_REPORT_FIELDS, data || {});
+        toast(
+          "解包完成：接收 " + text((data || {}).accepted, "0") + " 篇",
+          ((data || {}).rejected || 0) > 0 ? "warn" : "ok"
+        );
+      })
+      .catch(function (error) {
+        toast(error.message, "error");
+      });
+  }
+
   /* ---------------- Tab 4：任务（服务端分页 + 失败重试） ---------------- */
 
   function jobsLimit() {
@@ -2340,6 +2442,16 @@
     });
 
     $("ingest-url-form").addEventListener("submit", submitIngestUrl);
+    $("btn-dir-run").addEventListener("click", runDirIngest);
+    $("btn-zip-pick").addEventListener("click", function () {
+      $("zip-file-input").click();
+    });
+    $("zip-file-input").addEventListener("change", function (event) {
+      var picked = event.target.files && event.target.files[0];
+      $("zip-file-name").textContent = picked ? picked.name : "未选择";
+      $("btn-zip-run").disabled = !picked;
+    });
+    $("btn-zip-run").addEventListener("click", runZipIngest);
 
     $("btn-queue-pick").addEventListener("click", function () {
       $("queue-file-input").click();

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..client import PaperboxClient, PaperboxUnreachable
 from .deps import forward_headers, get_client, passthrough, unreachable
@@ -82,6 +82,56 @@ async def ingest_files(
     """
     try:
         response = await client.ingest_files(_upload_parts(files))
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
+class IngestDirRequest(BaseModel):
+    """``POST /api/ui/ingest/dir`` 的入参，镜像 paperbox 的 ``IngestDirRequest``。
+
+    ``root`` 是 **paperbox 所在机器上的绝对路径**（PDF 必须与 paperbox 同机或同挂载卷），
+    不是浏览器上传的目录 —— 这也是它默认不常开的原因：端点只在 ``INGEST_LOCAL_ROOTS``
+    非空时存在，root 必须落在白名单内。
+
+    默认值与 paperbox 一致：``glob="**/*.pdf"``、``recursive=True``、``limit=2000``、
+    ``dry_run=False``（界面上的"试运行"要让用户自己勾，不替他们改默认）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    root: str = Field(description="paperbox 机器上的绝对目录")
+    glob: str = Field(default="**/*.pdf")
+    recursive: bool = True
+    limit: int = Field(default=2000, ge=1, le=2000)
+    dry_run: bool = False
+
+
+@router.post("/ingest/dir", status_code=202)
+async def ingest_dir(
+    payload: IngestDirRequest, client: PaperboxClient = Depends(get_client)
+) -> JSONResponse:
+    """让 paperbox 自己扫目录（零传输）。端点关闭/越界时 paperbox 会给 404/403，原样透传。"""
+    if not payload.root.strip():
+        return JSONResponse(status_code=422, content={"detail": "root is required"})
+    try:
+        response = await client.ingest_dir(payload.model_dump())
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
+@router.post("/ingest/compressed", status_code=202)
+async def ingest_compressed(
+    file: UploadFile = File(...), client: PaperboxClient = Depends(get_client)
+) -> JSONResponse:
+    """上传一个 zip，paperbox 逐个解包入库（只认 zip：其余格式返回 415）。"""
+    handle = file.file
+    handle.seek(0)
+    try:
+        response = await client.ingest_compressed(
+            file.filename or "archive.zip", handle, file.content_type
+        )
     except PaperboxUnreachable as exc:
         return unreachable(exc)
     return _json(response)

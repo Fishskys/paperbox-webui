@@ -216,6 +216,51 @@
           </div>
         </form>
 
+        <div class="card" id="dir-card">
+          <h2>目录导入 <span class="muted">（服务端路径，零传输）</span></h2>
+          <label class="field field-wide">
+            <span>目录（paperbox 所在机器上的绝对路径）</span>
+            <input type="text" id="dir-root" placeholder="/data/papers" autocomplete="off" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>匹配</span>
+              <input type="text" id="dir-glob" value="**/*.pdf" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>上限</span>
+              <input type="number" id="dir-limit" value="2000" min="1" max="2000" />
+            </label>
+          </div>
+          <div class="check-row">
+            <label class="check"><input type="checkbox" id="dir-recursive" checked /> 递归子目录</label>
+            <label class="check"><input type="checkbox" id="dir-dry-run" /> 试运行（只报告，不建作业）</label>
+          </div>
+          <p class="muted">
+            PDF 必须已经在 paperbox 那台机器（或同挂载卷）上：这个入口不经过浏览器上传。
+            端点只在 paperbox 的 INGEST_LOCAL_ROOTS 非空时存在（否则 404），且 root 必须落在白名单内（否则 403）。
+          </p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-dir-run">开始扫描</button>
+          </div>
+          <div id="dir-report" hidden></div>
+        </div>
+
+        <div class="card" id="zip-card">
+          <h2>zip 批量导入</h2>
+          <p class="muted">
+            上传一个 .zip，paperbox 会逐个解包并入库（只认 zip：7z / rar / tar 会被拒）。
+            包里的每个 PDF 都按普通导入走，重复文件按 content hash 去重。
+          </p>
+          <div class="form-actions">
+            <input type="file" id="zip-file-input" accept=".zip,application/zip" hidden />
+            <button type="button" class="btn" id="btn-zip-pick">选择 zip</button>
+            <span class="muted" id="zip-file-name">未选择</span>
+            <button type="button" class="btn btn-primary" id="btn-zip-run" disabled>上传并导入</button>
+          </div>
+          <div id="zip-report" hidden></div>
+        </div>
+
         <div class="card" id="queue-card">
           <h2>上传队列 <span class="muted" id="queue-summary">（空）</span></h2>
 

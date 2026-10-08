@@ -1499,3 +1499,230 @@ def test_other_error_statuses_gain_no_hint() -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "paper not found"}
+
+
+# --------------------------------------------------------------------------- #
+# 0.4.x 的失败模式：状态码必须原样透传，并附一条能照着做的中文说明
+# --------------------------------------------------------------------------- #
+
+
+def _failing_backend(status: int, detail: str, headers: dict[str, str] | None = None) -> Handler:
+    """A paperbox that answers every request with one error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"detail": detail}, headers=headers or {})
+
+    return handler
+
+
+def test_a_413_explains_which_limit_was_hit() -> None:
+    """两处 413 口径不同：单请求总字节（200 MB）与 JSON 体（8 MB）。"""
+    client, _ = build_app(
+        _failing_backend(
+            413,
+            "request too large: 314572800 bytes exceeds INGEST_MAX_REQUEST_MB=200",
+        )
+    )
+    response = client.post(
+        "/api/ui/ingest/files", files={"files": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+    )
+    assert response.status_code == 413
+    hint = response.json()["hint"]
+    assert "INGEST_MAX_REQUEST_MB" in hint or "200" in hint
+    assert "拆" in hint or "分批" in hint
+
+    body_client, _ = build_app(_failing_backend(413, "request body too large"))
+    body = body_client.post(
+        "/api/ui/ingest/files", files={"files": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+    )
+    assert body.status_code == 413
+    assert "8" in body.json()["hint"]
+
+
+def test_a_415_says_only_zip_is_accepted() -> None:
+    client, _ = build_app(
+        _failing_backend(
+            415,
+            "only zip archives are supported; 7z/rar/tar are not (repack the folder as a .zip)",
+        )
+    )
+    response = client.post(
+        "/api/ui/ingest/compressed",
+        files={"file": ("a.7z", io.BytesIO(b"7z\xbc\xaf\x27\x1c"), "application/x-7z-compressed")},
+    )
+    assert response.status_code == 415
+    assert ".zip" in response.json()["hint"]
+
+
+def test_a_root_outside_the_whitelist_is_not_confused_with_a_role_problem() -> None:
+    client, _ = build_app(
+        _failing_backend(403, "root is outside the whitelist (INGEST_LOCAL_ROOTS): /etc")
+    )
+    response = client.post("/api/ui/ingest/dir", json={"root": "/etc"})
+    assert response.status_code == 403
+    hint = response.json()["hint"]
+    assert "INGEST_LOCAL_ROOTS" in hint
+    assert "档位" not in hint, "这是目录授权问题，不是 key 档位问题"
+
+
+def test_a_disabled_scan_endpoint_reads_as_not_enabled() -> None:
+    client, _ = build_app(
+        _failing_backend(404, "directory import is disabled: INGEST_LOCAL_ROOTS is empty")
+    )
+    response = client.post("/api/ui/ingest/dir", json={"root": "/tmp"})
+    assert response.status_code == 404
+    assert "INGEST_LOCAL_ROOTS" in response.json()["hint"]
+
+
+def test_a_missing_root_is_not_reported_as_a_disabled_endpoint() -> None:
+    client, _ = build_app(_failing_backend(404, "root is not a directory: /nope"))
+    response = client.post("/api/ui/ingest/dir", json={"root": "/nope"})
+    assert response.status_code == 404
+    hint = response.json()["hint"]
+    assert "not a directory" in response.json()["detail"], "原文照透传"
+    assert "不存在" in hint or "不是目录" in hint
+    assert "没开" not in hint, "端点没开是另一条文案（详情在 detail 里）"
+
+
+def test_a_429_quotes_the_retry_after_header() -> None:
+    client, _ = build_app(
+        _failing_backend(
+            429,
+            "server busy: ingestion backlog; retry after 30s",
+            headers={"Retry-After": "30"},
+        )
+    )
+    response = client.post(
+        "/api/ui/ingest/files", files={"files": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+    )
+    assert response.status_code == 429
+    assert response.headers.get("retry-after") == "30", "Retry-After 要透传"
+    hint = response.json()["hint"]
+    assert "30" in hint
+    assert "重试" in hint or "等" in hint
+
+
+def test_a_422_on_a_bad_archive_keeps_the_reason() -> None:
+    client, _ = build_app(
+        _failing_backend(422, "could not unpack the archive: BadZipFile('file is not a zip file')")
+    )
+    response = client.post(
+        "/api/ui/ingest/compressed",
+        files={"file": ("broken.zip", io.BytesIO(b"PK\x03\x04truncated"), "application/zip")},
+    )
+    assert response.status_code == 422
+    assert "BadZipFile" in json.dumps(response.json())
+    assert "zip" in response.json()["hint"]
+
+
+def test_a_dead_paperbox_reads_as_unreachable_not_as_a_mystery_502() -> None:
+    """paperbox 连不上时 webui 只能看到 502；4.1 的维度对账会让它起不来。"""
+
+    def refuses(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client, _ = build_app(refuses)
+    response = client.get("/api/ui/papers")
+    assert response.status_code == 502
+    assert "unreachable" in response.json()["detail"]
+    hint = response.json()["hint"]
+    assert "paperbox" in hint
+    assert "04-embedding" in hint or "维度" in hint
+
+
+def test_an_untouched_status_gets_no_invented_hint() -> None:
+    """没见过的状态不要硬编文案：原样透传比编一句错的好。"""
+    client, _ = build_app(_failing_backend(418, "i am a teapot"))
+    response = client.get("/api/ui/papers")
+    assert response.status_code == 418
+    assert "hint" not in response.json()
+    assert response.json()["detail"] == "i am a teapot"
+
+
+# --------------------------------------------------------------------------- #
+# 目录导入与 zip 批量导入：paperbox 有入口，webui 也必须暴露（否则 415/403-root
+# /404-scan 这些文案根本没有出现的地方）
+# --------------------------------------------------------------------------- #
+
+
+def test_the_dir_endpoint_relays_paperbox_and_keeps_defaults_honest() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            202,
+            json={
+                "root": "/data/papers",
+                "glob": "**/*.pdf",
+                "recursive": True,
+                "dry_run": True,
+                "matched": 3,
+                "accepted": 0,
+                "duplicate": 0,
+                "rejected": 0,
+                "skipped": 0,
+                "jobs": [{"filename": "a.pdf", "relative": "a.pdf", "status": "dry_run"}],
+            },
+        )
+
+    client, forwarded = build_app(handler)
+    response = client.post("/api/ui/ingest/dir", json={"root": "/data/papers", "dry_run": True})
+    assert response.status_code == 202
+    assert forwarded[0].url.path == "/api/papers/ingest/dir"
+    # 默认值必须与 paperbox 的契约一致（dry_run 只有用户勾了才为真）
+    assert seen[0] == {
+        "root": "/data/papers",
+        "glob": "**/*.pdf",
+        "recursive": True,
+        "limit": 2000,
+        "dry_run": True,
+    }
+    assert response.json()["matched"] == 3
+
+
+def test_the_dir_endpoint_requires_a_root() -> None:
+    client, forwarded = build_app(_failing_backend(500, "should not be called"))
+    response = client.post("/api/ui/ingest/dir", json={"root": "   "})
+    assert response.status_code == 422
+    assert not forwarded, "空 root 不该打给 paperbox"
+
+
+def test_the_compressed_endpoint_streams_to_paperbox() -> None:
+    client, forwarded = build_app(
+        lambda request: httpx.Response(
+            202,
+            json={
+                "request_id": "abc",
+                "entries_total": 2,
+                "entries_ignored": 0,
+                "entries_rejected": 0,
+                "accepted": 1,
+                "duplicate": 1,
+                "rejected": 0,
+                "results": [],
+            },
+        )
+    )
+    response = client.post(
+        "/api/ui/ingest/compressed",
+        files={"file": ("papers.zip", io.BytesIO(b"PK\x03\x04fake"), "application/zip")},
+    )
+    assert response.status_code == 202
+    assert forwarded[0].url.path == "/api/papers/ingest/compressed"
+    assert b"papers.zip" in forwarded[0].content
+    assert response.json()["accepted"] == 1
+
+
+def test_the_ingest_tab_offers_both_new_entry_points() -> None:
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+    for marker in ("dir-root", "dir-glob", "dir-limit", "dir-recursive", "dir-dry-run",
+                   "btn-dir-run", "dir-report", "zip-file-input", "btn-zip-run", "zip-report"):
+        assert f'id="{marker}"' in html, marker
+    for symbol in ("runDirIngest", "runZipIngest", "renderReport",
+                   "/api/ui/ingest/dir", "/api/ui/ingest/compressed"):
+        assert symbol in body, symbol
+    # 界面要说清不是浏览器上传（否则用户会以为选了本地文件夹就传上去了）
+    assert "同挂载卷" in html or "服务端路径" in html
