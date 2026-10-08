@@ -1306,18 +1306,25 @@ def test_index_shell_exposes_the_metadata_tab() -> None:
 def test_app_js_implements_the_consistency_tab() -> None:
     client, _ = build_app(_static_handler)
     body = client.get("/static/app.js").text
+    html = client.get("/").text
 
     for symbol in (
         "loadConsistency",
         "toggleConsistencyAuto",
         "renderConsistencyRow",
+        "renderCensus",
         "renderOrphans",
         "paintTotals",
-        "ISSUE_LABELS",
+        "CL.censusRows",
+        "CL.issueLabel",
         "/api/ui/consistency",
     ):
         assert symbol in body, symbol
-    # 七个 issue 码都要有中文标签（否则表格里会出现英文码）
+
+    # 问题码映射与普查规则在 consistency-logic.js（app.js 只做 DOM），九个码都要有中文标签，
+    # 否则表格里会出现英文码；0.4.1 的两个新码同样在列。
+    logic = client.get("/static/consistency-logic.js").text
+    assert "ISSUE_LABELS" in logic
     for code in (
         "missing_object",
         "orphan_object",
@@ -1326,8 +1333,13 @@ def test_app_js_implements_the_consistency_tab() -> None:
         "orphan_index",
         "chunk_count_mismatch",
         "deleted_paper_residue",
+        "parser_stamp_mismatch",
+        "embedding_model_mismatch",
     ):
-        assert code in body, code
+        assert code in logic, code
+    # 普查要落在界面上：容器 + 表格 + 两个 scope
+    for marker in ("consistency-census-wrap", "consistency-census", "consistency-census-note"):
+        assert f'id="{marker}"' in html, marker
 
 
 def test_app_js_implements_the_metadata_tab() -> None:
@@ -1417,7 +1429,7 @@ def test_index_loads_every_logic_module_before_app_js() -> None:
     client, _ = build_app(_static_handler)
     html = client.get("/").text
 
-    for module in ("search-logic.js", "jobs-logic.js", "queue-logic.js"):
+    for module in ("search-logic.js", "jobs-logic.js", "queue-logic.js", "consistency-logic.js"):
         assert f'src="/static/{module}"' in html, module
         assert html.index(module) < html.index("app.js"), module
 

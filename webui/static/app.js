@@ -10,6 +10,9 @@
   var SL = window.PaperboxSearch;
   /* 任务列表的纯逻辑在 jobs-logic.js：分页换算与耗时文案在那里，并被 node:test 真测。 */
   var JL = window.PaperboxJobs;
+  /* 一致性的纯逻辑在 consistency-logic.js：问题码中文映射与向量模型普查的摊平规则在那里，
+   * 并被 node:test 真测（少一个码就是把英文码甩给使用者）。 */
+  var CL = window.PaperboxConsistency;
 
   var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
@@ -1726,15 +1729,7 @@
 
   /* ---------------- Tab 5：一致性（三端只读对账） ---------------- */
 
-  var ISSUE_LABELS = {
-    missing_object: "缺对象",
-    orphan_object: "孤儿对象",
-    missing_chunks: "缺 chunk 行",
-    missing_index: "缺索引文档",
-    orphan_index: "孤儿索引文档",
-    chunk_count_mismatch: "chunk 数不符",
-    deleted_paper_residue: "删除残留"
-  };
+  /* 问题码中文映射与普查的摊平规则都在 consistency-logic.js（纯逻辑，node 里真测过）。 */
 
   var CONSISTENCY_TOTALS = [
     ["papers", "论文（含已删）"],
@@ -1751,7 +1746,34 @@
   ];
 
   function issueLabel(code) {
-    return ISSUE_LABELS[code] || code;
+    return CL.issueLabel(code);
+  }
+
+  /* 向量模型普查（0.4.1 的 embedding_models）：列 chunks/documents 各模型计数，
+   * 两个 scope 的模型集合不一致时给出提醒（"换模型只换一半"）。 */
+  function renderCensus(payload) {
+    var wrap = $("consistency-census-wrap");
+    var body = $("consistency-census");
+    var note = $("consistency-census-note");
+    var rows = CL.censusRows(payload && payload.embedding_models);
+    clear(body);
+    wrap.hidden = rows.length === 0;
+    note.hidden = true;
+    if (!rows.length) return;
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      tr.appendChild(el("td", null, row[0]));
+      var modelCell = el("td");
+      modelCell.appendChild(el("code", null, row[1]));
+      tr.appendChild(modelCell);
+      tr.appendChild(el("td", null, String(row[2])));
+      body.appendChild(tr);
+    });
+    var warning = CL.censusWarning(payload && payload.embedding_models);
+    if (warning) {
+      note.hidden = false;
+      note.textContent = "⚠ " + warning;
+    }
   }
 
   /* 一致性与元数据两个 Tab 共用的小格子（label → value）。 */
@@ -1801,6 +1823,13 @@
     statusCell.appendChild(el("span", "chip chip-info", text(row.status, "—")));
     if (row.deleted) statusCell.appendChild(el("span", "chip chip-error", "已删除"));
     tr.appendChild(statusCell);
+
+    /* 单篇跨两个已知模型 = 换模型只换了一半（0.4.1 的 embedding_model_mismatch 现场）。 */
+    var modelsText = CL.paperModelsText(row.embedding_models);
+    var modelsCell = el("td", modelsText === "—" ? "muted" : null, modelsText);
+    if (modelsText.indexOf(" / ") >= 0) modelsCell.className = "cell-error";
+    modelsCell.title = modelsText;
+    tr.appendChild(modelsCell);
 
     tr.appendChild(
       el(
@@ -1902,6 +1931,8 @@
               text(data.checked_at, "—")
           )
         );
+
+        renderCensus(data);
 
         var errors = Array.isArray(data.errors) ? data.errors : [];
         var strip = $("consistency-errors");

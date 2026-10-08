@@ -584,6 +584,34 @@ code {
   word-break: break-all;
 }
 
+.embedding-census {
+  margin-top: 10px;
+}
+
+.embedding-census h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mini-table {
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.mini-table th,
+.mini-table td {
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  text-align: left;
+  word-break: break-all;
+}
+
+.mini-table th {
+  background: var(--bg-soft);
+  font-weight: 600;
+}
+
 .mini-list {
   margin: 0;
   padding-left: 16px;

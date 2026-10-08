@@ -340,6 +340,16 @@
         <div class="card">
           <h2>对账结论 <span class="muted" id="consistency-summary">尚未检查</span></h2>
           <div class="totals-grid" id="consistency-totals"></div>
+          <div class="embedding-census" id="consistency-census-wrap" hidden>
+            <h3>向量模型普查 <span class="muted">（embedding_models，0.4.1 起）</span></h3>
+            <table class="mini-table">
+              <thead>
+                <tr><th>来源</th><th>模型</th><th>数量</th></tr>
+              </thead>
+              <tbody id="consistency-census"></tbody>
+            </table>
+            <p class="muted" id="consistency-census-note" hidden></p>
+          </div>
           <div class="errors-strip" id="consistency-errors" hidden></div>
           <p class="muted" id="consistency-truncated" hidden></p>
         </div>
@@ -351,6 +361,7 @@
               <tr>
                 <th>论文</th>
                 <th>状态</th>
+                <th>向量模型</th>
                 <th>文件 PG ↔ MinIO</th>
                 <th>chunks PG ↔ OS</th>
                 <th>问题</th>
@@ -492,6 +503,7 @@
     <script src="/static/search-logic.js"></script>
     <script src="/static/jobs-logic.js"></script>
     <script src="/static/queue-logic.js"></script>
+    <script src="/static/consistency-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
