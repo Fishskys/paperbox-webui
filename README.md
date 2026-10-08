@@ -15,10 +15,15 @@
 ## 1. 前置条件
 
 paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
-由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **2026-09-23**
-（本 WebUI 依赖 `/api/papers/ingest/files`、`429 + Retry-After`、`/api/jobs/queue` 与 `QUEUED` 阶段，
-以及 2026-09-22/23 新增的 `/api/consistency`、`/api/metadata/*`、`GET /api/jobs` 的 `offset`/`stage`
-与 `POST /api/jobs/{id}/retry`）：
+由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.4.1**
+（基线契约与逐条依据见 [`docs/architecture/01-paperbox-contract.md`](docs/architecture/01-paperbox-contract.md)）。
+本 WebUI 依赖的关键契约：
+
+- `/api/papers/ingest/{file,files}`、`429 + Retry-After`、`/api/jobs/queue` 与 `QUEUED` 阶段（2026-09-19/20 起）；
+- `/api/consistency` 与 `/api/metadata/*`、`GET /api/jobs` 的 `offset`/`stage`、`POST /api/jobs/{id}/retry`（2026-09-22/23 起）；
+- 检索响应的 `candidates` / `backend`、请求体 `rerank` 开关（0.2.0 起）；
+- 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 §2；
+- `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）：
 
 ```powershell
 cd <paperbox 后端目录>
@@ -185,9 +190,9 @@ node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍
 与耗时文案（无 `finished_at` 即「进行中」）。
 
 真机验收（并发在途数、429 退避、两阶段进度、`QUEUED`、停止语义、收尾基线）的实测输出见
-[`docs/acceptance-upload.md`](docs/acceptance-upload.md)；2026-09-23 四项新能力
+[`docs/examine/acceptance-upload.md`](docs/examine/acceptance-upload.md)；2026-09-23 四项新能力
 （搜索选项 / 一致性 / 元数据导入 / 任务分页）的实测输出见
-[`docs/acceptance-2026-09-23.md`](docs/acceptance-2026-09-23.md)。
+[`docs/examine/acceptance-2026-09-23.md`](docs/examine/acceptance-2026-09-23.md)。
 
 ## 6. 目录
 
@@ -201,8 +206,12 @@ webui/
   static/            index.html  app.js  search-logic.js  jobs-logic.js
                      queue-logic.js  style.css（无构建）
 tests/               后端代理层单测（MockTransport）+ tests/js 的 node:test
-docs/                真机验收记录
-SPEC.md              本项目的实现规范
+docs/architecture/   活文档：00-overview（入口/文档地图）、01-paperbox-contract（契约基线）、
+                     MVP-SPEC（实现规范）
+docs/examine/        真机验收与审查快照（只增不改）
+docs/progress/       项目级进度（批次、提交、基线读数、未决项）
+docs/old/            被取代的活文档（NAME-YYYYMMDD.md）
+README.md            本文件
 ```
 
 前端只加载**静态文件**，没有构建步骤：`search-logic.js`、`jobs-logic.js`、`queue-logic.js`
