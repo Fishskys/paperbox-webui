@@ -86,7 +86,14 @@ uv run python scripts/manage_keys.py list      # 复核：prefix=webui、role=ad
 四类索引词（`ieee_terms` / `author_terms` / `dynamic_index_terms` / `source_tags`）**。
 结果卡片给出标题、作者、年份、venue 与那一届、卷(期)、页码、发表日期、DOI（有值才显示这一行）、
 score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low），
-并列出 evidence 片段（页码 + 章节 + 文本，可展开），顶部显示命中论文数、耗时与生效的过滤项数。
+并列出 evidence 片段（页码 + 章节 + 文本，可展开）。
+
+摘要行显示**后端 / 命中论文数 / 候选数 / 精排状态 / 总耗时**与生效的过滤项数：
+
+- **精排默认关**（与 paperbox 的默认一致）。勾上才发 `"rerank": true`，并显示精排模型与它自己的耗时
+  （int8 档一次池约 2–5 s）；三种状态分得很清：没勾 = 「精排 关」，勾了但服务端没跑起来 =
+  「精排 未生效」，跑了 = 模型 + 毫秒。`rerank.enabled` 只代表服务端配置了精排，不是「跑过了」。
+- **后端覆盖**默认「默认（SEARCH_BACKEND）」= 不发 `backend` 字段；选了 `native` / `python` 才发。
 
 - 标识符必须是 `scheme:value`（`doi` / `arxiv` / `ieee_article_number` / `issn` / `isbn` / `pmid` /
   `openalex` / `semantic_scholar` / `url` / `sha256`）：**写错的项会就地忽略并提示**，
@@ -99,7 +106,15 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 支持状态过滤与标题搜索、20 条一页的分页；每行可「详情 / 下载原文 / 重建索引 / 删除」
 （删除需二次确认，是软删除）。
 
-**③ 导入** — URL 输入框，或**多选本地 PDF 组成上传队列**（也可直接把文件 / 整个文件夹拖进投放区）。
+**③ 导入** — 三个入口：URL 输入框、**多选本地 PDF 组成上传队列**（也可直接把文件 / 整个文件夹拖进投放区），
+以及两张独立的卡片：
+
+- **目录导入**（服务端路径、零传输）：填的是 **paperbox 那台机器上的绝对路径**，不是浏览器里的文件夹。
+  可设 `glob` / 递归 / 上限（≤2000），「试运行」不勾时会真的建作业。端点只在 paperbox 的
+  `INGEST_LOCAL_ROOTS` 非空时存在（否则 404 + 可读文案），root 越界是 403（与 key 档位问题分开说）。
+- **zip 批量导入**：上传一个 `.zip`，paperbox 逐个解包入库；**只认 zip**，7z/rar/tar 会被 415 拒掉。
+  两份报告各自按 paperbox 的字段渲染（目录 = `matched/accepted/duplicate/rejected/skipped`；
+  压缩包 = `entries_total/ignored/rejected` + 结果），不套用 `/files` 的结构。
 队列里每一项独立显示状态：待上传 → 上传中 x% → 已提交 → paperbox 阶段
 （`RECEIVED → QUEUED → DOWNLOADING → STORED → PARSING → CHUNKING → EMBEDDING → INDEXING → COMPLETED`）→
 已完成 / 重复论文 / 失败（失败给出 `error_message`）；URL 与本地上传共用同一条队列。
@@ -127,8 +142,12 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 问题条目上限（1..1000，默认 200）+「每 30 秒自动检查」。结论区给出
 `一致 / 有漂移` 徽标、检查时间、耗时、索引名与是否存在，以及一组**永远精确**的总数
 （论文含已删 / 存活 / 已删 / 文件行 / 对象 / chunk 行 / 文档 / staging 残留 / 不一致论文 / 孤儿对象 / 孤儿文档）；
-下表逐篇列出漂移（文件 PG↔MinIO、chunk PG↔OS、问题徽标、缺失对象、孤儿对象），论文可点开详情抽屉；
-store 级孤儿单列一卡。**某个 store 连不上时它出现在 `errors` 横条里，另外两端照常给结论** ——
+下表逐篇列出漂移（文件 PG↔MinIO、chunk PG↔OS、**向量模型**、问题徽标、缺失对象、孤儿对象），
+论文可点开详情抽屉；store 级孤儿单列一卡。
+另有一块 **embedding 模型普查**（0.4.1 的 `embedding_models`）：按 `chunks` / `documents` 两个来源分别列出
+各向量模型的数量；两侧模型集合不一致或有 `unknown`（早于 `embedding_model` 字段的记录）时会给出
+「换模型只换了一半」的提醒 —— 那批向量彼此不可比，得整库重嵌。**九个问题码**都有中文说明
+（`parser_stamp_mismatch`、`embedding_model_mismatch` 是 0.4.x 新增的两个），认不出的码原样显示而不是消失。**某个 store 连不上时它出现在 `errors` 横条里，另外两端照常给结论** ——
 这是 paperbox 的语义，界面不会因此变成错误页。
 
 **⑥ 元数据** — 元数据导入闭环：
@@ -169,11 +188,16 @@ store 级孤儿单列一卡。**某个 store 连不上时它出现在 `errors` �
 | POST | `/api/ui/ingest` | URL 导入：`{"source_type":"url","source":"..."}`（也接受 `{"url":"..."}`） |
 | POST | `/api/ui/ingest/file` | 本地上传（旧端点）：multipart 字段 `file` |
 | POST | `/api/ui/ingest/files` | 本地上传（新端点）：multipart 字段 `files`，可重复，逐文件结果 |
-| POST | `/api/ui/search` | 检索：`{"query","mode","top_k","filters":{...}}` |
+| POST | `/api/ui/ingest/dir` | 目录导入（**paperbox 机器上的路径**，零传输）：`{"root","glob","recursive","limit","dry_run"}`，默认 `dry_run=false` |
+| POST | `/api/ui/ingest/compressed` | zip 批量导入：multipart 字段 `file`，只认 zip（其余 415） |
+| POST | `/api/ui/search` | 检索：`{"query","mode","top_k","rerank","backend","filters":{...}}`；`rerank` 默认 `false` |
 
 错误约定：paperbox 返回的 4xx/5xx 会**原样透传**（状态码 + `{"detail": ...}`），
 **包括 429 的 `Retry-After` 响应头**（上传队列的退避全靠它）；
-paperbox 不可达时返回 `502` + `{"detail": "paperbox unreachable: ..."}`；
+已知的失败模式会**额外**带一条 `hint`（可照着做的中文说明）：401 / 403（分「档位不足」与
+「目录越界」两种）/ 404（分「端点未开启」与「root 不是目录」）/ 413（分「总字节」与「JSON 体」）/
+415 / 422 / 429（附 `Retry-After` 秒数）/ 502；**认不出的状态码不加 hint**，原文透传。
+paperbox 不可达时返回 `502` + `{"detail": "paperbox unreachable: ..."}`（同样带 hint）；
 `/api/ui/health` 在 paperbox 挂掉时仍返回 200，但把错误放在 `paperbox.error` 里，
 这样页面上的状态条能显示「不可用」而不是整个页面报错。
 
@@ -184,27 +208,33 @@ uv run pytest                      # 后端 + 静态守卫 + 调起 node 测试
 node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍）
 ```
 
-`uv run pytest` 目前 72 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
+`uv run pytest` 目前 89 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
 健康聚合与降级、参数透传（分页/状态/标题搜索/chunks/任务）、错误透传与 502、检索请求体逐字转发、
 导入 URL 的两种请求体与非法输入、multipart 上传、`/ingest/files` 多文件代理与逐文件结果、
-`Retry-After` 透传（有/无）、`/api/ui/config`、`/api/ui/jobs/queue` 的路由顺序、
+`/ingest/dir` 与 `/ingest/compressed` 的代理与默认值一致性、`Retry-After` 透传（有/无）、
+鉴权三态（401 / 403 不匹配 / 403 `insufficient role`）与 0.4.x 失败文案（413 两处、415、403-root、
+404 两种、422、429、502）、`/api/ui/config`、`/api/ui/jobs/queue` 的路由顺序、
 任务分页参数与 `total` 透传、失败作业重试的 409 原文透传、
 一致性报告（含 `errors` 时仍 200）、元数据 import/review/attach/apply 的四种请求体，
 原文流式下载、首页 HTML，以及静态资源守卫（多选上传队列的 DOM 结构、`app.js` 里的队列实现与
-新端点、检索过滤字段与六个 Tab 的页面骨架、`queue-logic.js` / `search-logic.js` / `jobs-logic.js`
-的加载顺序与导出）。
+新端点、检索过滤字段与六个 Tab 的页面骨架、四个 `*-logic.js` 的加载顺序与导出）。
 
-`tests/js/` 下是 39 个 `node:test` 用例，纯逻辑真跑：
+`tests/js/` 下是 50 个 `node:test` 用例，纯逻辑真跑：
 `queue_logic.test.mjs`（14）覆盖 `parseRetryAfter`、`retryDelayMs`（Retry-After 优先 / 指数增长 /
 抖动范围 / 上限）、`summarizeProgress`、`uploadSlots`、`shouldSuggestServerSide`；
-`search_logic.test.mjs` 覆盖过滤体构造（空值不发、`scheme:value` 校验、年份解析、多选标签）；
+`search_logic.test.mjs` 覆盖过滤体构造（空值不发、`scheme:value` 校验、年份解析、多选标签）、
+检索请求体（`rerank` 默认关且恒为布尔、`backend` 只在选了覆盖值才发）与命中摘要（候选数、
+精排三态）；
 `jobs_logic.test.mjs` 覆盖分页换算（`ceil(total/limit)`、`offset` 越界夹到最后一页、上一页/下一页可用性）
-与耗时文案（无 `finished_at` 即「进行中」）。
+与耗时文案（无 `finished_at` 即「进行中」）；
+`consistency_logic.test.mjs` 覆盖九个问题码的中文映射、普查摊平与「换模型只换一半」告警。
 
 真机验收（并发在途数、429 退避、两阶段进度、`QUEUED`、停止语义、收尾基线）的实测输出见
 [`docs/examine/acceptance-upload.md`](docs/examine/acceptance-upload.md)；2026-09-23 四项新能力
 （搜索选项 / 一致性 / 元数据导入 / 任务分页）的实测输出见
-[`docs/examine/acceptance-2026-09-23.md`](docs/examine/acceptance-2026-09-23.md)。
+[`docs/examine/acceptance-2026-09-23.md`](docs/examine/acceptance-2026-09-23.md)；
+**对齐 paperbox 0.4.1 的验收（2026-10-08，含精排开关、embedding 普查、五条失败文案、
+真机 429）见 [`docs/examine/acceptance-2026-10-08.md`](docs/examine/acceptance-2026-10-08.md)**。
 
 ## 6. 目录
 
@@ -216,7 +246,7 @@ webui/
   routers/           system / config / papers / jobs / ingest / search / actions /
                      consistency / metadata / deps
   static/            index.html  app.js  search-logic.js  jobs-logic.js
-                     queue-logic.js  style.css（无构建）
+                     queue-logic.js  consistency-logic.js  style.css（无构建）
 tests/               后端代理层单测（MockTransport）+ tests/js 的 node:test
 docs/architecture/   活文档：00-overview（入口/文档地图）、01-paperbox-contract（契约基线）、
                      MVP-SPEC（实现规范）
@@ -226,7 +256,7 @@ docs/old/            被取代的活文档（NAME-YYYYMMDD.md）
 README.md            本文件
 ```
 
-前端只加载**静态文件**，没有构建步骤：`search-logic.js`、`jobs-logic.js`、`queue-logic.js`
+前端只加载**静态文件**，没有构建步骤：`search-logic.js`、`jobs-logic.js`、`queue-logic.js`、`consistency-logic.js`
 是"会算错"的纯逻辑（浏览器挂 `window.Paperbox*`，node 走 `module.exports`，由 `tests/js/` 真跑），
 `app.js` 只做 DOM 接线，`style.css` 是全部样式。
 
