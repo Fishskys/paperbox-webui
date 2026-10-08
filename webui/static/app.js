@@ -221,9 +221,10 @@
     return values;
   }
 
-  /* 表单 → paperbox 的 `filters`。规则（哪些键会发出去、什么输入就地拦下）全在
-   * search-logic.js 里，这里只负责读 DOM；`problems` 是给人看的提示，发送前会删掉。 */
-  function buildSearchBody() {
+  /* 表单 → paperbox 的检索请求体。规则（哪些键会发出去、什么输入就地拦下）全在
+   * search-logic.js 里，这里只负责读 DOM；`problems` 是给人看的提示，发送前会删掉。
+   * `rerank` 默认不勾（与 paperbox 的默认一致），`backend` 选择"默认"时不发。 */
+  function collectSearchRequest() {
     var built = SL.buildFilters({
       yearFrom: $("filter-year-from").value,
       yearTo: $("filter-year-to").value,
@@ -240,13 +241,17 @@
       dynamicIndexTerms: $("filter-dynamic-index-terms").value,
       sourceTags: $("filter-source-tags").value
     });
-    return {
-      query: $("search-query").value.trim(),
-      mode: $("search-mode").value,
-      top_k: Number($("search-topk").value) || 10,
-      filters: built.filters,
-      problems: built.problems
-    };
+    return Object.assign(
+      SL.buildSearchBody({
+        query: $("search-query").value,
+        mode: $("search-mode").value,
+        topK: $("search-topk").value,
+        rerank: $("search-rerank").checked,
+        backend: $("search-backend").value,
+        filters: built.filters
+      }),
+      { problems: built.problems }
+    );
   }
 
   function relevanceBadge(relevance) {
@@ -316,7 +321,7 @@
 
   function runSearch(event) {
     if (event) event.preventDefault();
-    var body = buildSearchBody();
+    var body = collectSearchRequest();
     var problems = body.problems || [];
     delete body.problems;              // 只是给人看的提示，不进请求体
     if (problems.length) toast(problems.join("；"), "warn");
@@ -351,13 +356,7 @@
           el(
             "span",
             null,
-            "模式 " +
-              text(data.mode, body.mode) +
-              " · 命中 " +
-              text(data.total, items.length) +
-              " 篇 · 耗时 " +
-              (typeof data.took_ms === "number" ? data.took_ms.toFixed(1) : "—") +
-              " ms" +
+            SL.searchSummary(data, { topK: body.top_k, rerankRequested: body.rerank === true }) +
               (filterCount ? " · 过滤 " + filterCount + " 项" : "")
           )
         );

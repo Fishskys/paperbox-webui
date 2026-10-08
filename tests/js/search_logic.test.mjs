@@ -201,3 +201,104 @@ test("metadataLine renders only what paperbox echoed back", () => {
   );
   assert.deepEqual(search.metadataLine({ doi: "  " }), []);
 });
+
+// --------------------------------------------------------------------------- //
+// 检索请求体：rerank 默认关（与 paperbox 的默认一致），backend 仅在选择了覆盖值时发
+// --------------------------------------------------------------------------- //
+
+test("rerank defaults to off and is always sent as a boolean", () => {
+  const off = search.buildSearchBody({ query: "x", mode: "hybrid", topK: 10, filters: {} });
+  assert.equal(off.rerank, false);
+  assert.equal(typeof off.rerank, "boolean", "发 undefined 会被后端当缺省字段");
+
+  const on = search.buildSearchBody({
+    query: "x",
+    mode: "hybrid",
+    topK: 10,
+    rerank: true,
+    filters: {}
+  });
+  assert.equal(on.rerank, true);
+
+  // 只有真值 true 才算勾上：字符串 "false"、1、undefined 都不许开
+  for (const falsy of ["false", "true", 1, 0, null, undefined]) {
+    assert.equal(
+      search.buildSearchBody({ query: "x", rerank: falsy, filters: {} }).rerank,
+      false,
+      String(falsy)
+    );
+  }
+});
+
+test("a backend override is sent only when chosen", () => {
+  const auto = search.buildSearchBody({ query: "x", mode: "hybrid", topK: 10, filters: {} });
+  assert.equal("backend" in auto, false, "空 = 让服务端按 SEARCH_BACKEND 决定");
+
+  const pinned = search.buildSearchBody({
+    query: "x",
+    mode: "hybrid",
+    topK: 10,
+    backend: "python",
+    filters: {}
+  });
+  assert.equal(pinned.backend, "python");
+});
+
+test("the search body carries query, mode, top_k and filters", () => {
+  const body = search.buildSearchBody({
+    query: "  attention  ",
+    mode: "keyword",
+    topK: "25",
+    filters: { year_from: 2017 }
+  });
+  assert.deepEqual(body, {
+    query: "attention",
+    mode: "keyword",
+    top_k: 25,
+    rerank: false,
+    filters: { year_from: 2017 }
+  });
+  // 缺省值兜底，避免发 top_k=0 / 空 mode
+  const defaults = search.buildSearchBody({});
+  assert.equal(defaults.mode, "hybrid");
+  assert.equal(defaults.top_k, 10);
+  assert.deepEqual(defaults.filters, {});
+});
+
+// --------------------------------------------------------------------------- //
+// 命中摘要：候选数与精排状态要能看出来（rerank.model 非空 = 真的跑了）
+// --------------------------------------------------------------------------- //
+
+test("searchSummary shows the candidates and whether rerank ran", () => {
+  // 没勾：paperbox 会回 enabled=true / model=null —— 这是正常状态，要显示「关」
+  const off = search.searchSummary(
+    { mode: "hybrid", backend: "native", total: 30, candidates: 31, took_ms: 412.34, rerank: { enabled: true, model: null, took_ms: null } },
+    { topK: 10, rerankRequested: false }
+  );
+  assert.match(off, /后端 native/);
+  assert.match(off, /命中 30 篇/);
+  assert.match(off, /候选 31/);
+  assert.match(off, /精排 关/);
+  assert.match(off, /耗时 412\.3 ms/);
+
+  // 勾了但 model 仍是 null = 服务端静默降级，必须与「关」区分开
+  const requested = search.searchSummary(
+    { mode: "hybrid", backend: "native", total: 30, took_ms: 5000, rerank: { enabled: true, model: null, took_ms: null } },
+    { rerankRequested: true }
+  );
+  assert.match(requested, /精排 未生效/);
+
+  const on = search.searchSummary(
+    { mode: "hybrid", backend: "native", total: 30, candidates: 50, took_ms: 4720.1, rerank: { enabled: true, model: "temsa/mmarco-x", took_ms: 3975 } },
+    { rerankRequested: true }
+  );
+  assert.match(on, /精排 temsa\/mmarco-x 3975 ms/);
+  assert.match(on, /候选 50/);
+});
+
+test("searchSummary degrades gracefully on a thin payload", () => {
+  const text = search.searchSummary({}, { topK: 10 });
+  assert.match(text, /后端 —/);
+  assert.match(text, /命中 — 篇/);
+  assert.match(text, /top_k 10/);
+});

@@ -54,6 +54,23 @@
             <input type="number" id="search-topk" value="10" min="1" max="100" />
           </label>
           <label class="field">
+            <span>后端覆盖</span>
+            <select id="search-backend">
+              <option value="" selected>默认（SEARCH_BACKEND）</option>
+              <option value="native">native</option>
+              <option value="python">python</option>
+            </select>
+          </label>
+          <div class="field">
+            <span>精排</span>
+            <div class="check-row">
+              <label class="check"
+                ><input type="checkbox" id="search-rerank" /> 开启 cross-encoder
+                精排（慢：一次池约 2–5 s）</label
+              >
+            </div>
+          </div>
+          <label class="field">
             <span>年份从</span>
             <input type="number" id="filter-year-from" placeholder="2015" min="1900" max="2100" />
           </label>

@@ -182,6 +182,57 @@
     }).length;
   }
 
+  /* 检索请求体（paperbox `POST /api/search` 的入参，见 app/schemas/search.py 的 SearchRequest）。
+   *
+   *   - `rerank` 是 0.2.0 起的**显式开关，paperbox 侧默认 false**：这里默认也关（`source.rerank`
+   *     必须真为 `true` 才发 true），与 API 默认一致；勾上才让服务端做第二阶段精排。
+   *   - `backend` 只在选择了覆盖值时才发：空串 = 让服务端按 `SEARCH_BACKEND` 决定（本机是 `native`）。
+   *   - `filters` 由 buildFilters() 产出，空对象照发（后端按"不过滤"处理）。
+   */
+  function buildSearchBody(raw) {
+    var source = raw || {};
+    var topK = Number(source.topK);
+    var body = {
+      query: isBlank(source.query) ? "" : String(source.query).trim(),
+      mode: isBlank(source.mode) ? "hybrid" : String(source.mode),
+      top_k: topK > 0 ? topK : 10,
+      rerank: source.rerank === true,
+      filters: source.filters || {}
+    };
+    var backend = isBlank(source.backend) ? "" : String(source.backend).trim();
+    if (backend) body.backend = backend;
+    return body;
+  }
+
+  /* 命中摘要：模式 / 后端 / 命中论文数（`total` 是论文数真值）/ 候选数 / 精排状态。
+   *
+   * 精排有三种状态，靠 opts.rerankRequested 区分：
+   *   - 没勾 + `rerank.model` 为空 → 「精排 关」（这是与 paperbox 默认一致的正常状态）
+   *   - 勾了 + `rerank.model` 为空 → 「精排 未生效」（服务端静默降级，值得注意）
+   *   - `rerank.model` 非空 → 「精排 <模型> <耗时>」（真的跑了）
+   * `rerank.enabled` 只表示服务端配置了精排，不能当"跑过了"的证据。 */
+  function searchSummary(payload, opts) {
+    var data = payload || {};
+    var options = opts || {};
+    var parts = [
+      "模式 " + (isBlank(data.mode) ? "hybrid" : String(data.mode)),
+      "后端 " + (isBlank(data.backend) ? "—" : String(data.backend)),
+      "命中 " + (typeof data.total === "number" ? data.total : "—") + " 篇"
+    ];
+    if (typeof data.candidates === "number") parts.push("候选 " + data.candidates);
+    var rerank = data.rerank || {};
+    if (rerank.model) {
+      parts.push(
+        "精排 " + rerank.model + (typeof rerank.took_ms === "number" ? " " + rerank.took_ms + " ms" : "")
+      );
+    } else {
+      parts.push(options.rerankRequested ? "精排 未生效" : "精排 关");
+    }
+    parts.push("耗时 " + (typeof data.took_ms === "number" ? data.took_ms.toFixed(1) : "—") + " ms");
+    if (options.topK) parts.push("top_k " + options.topK);
+    return parts.join(" · ");
+  }
+
   /* 结果卡片上那一行元数据：venue · 那一届 · 类型 · 卷(期) · 页码 · 发表日期。
    * 只拼后端真的回显了的字段（app/schemas/search.py 的 SearchResult）。 */
   function metadataLine(result) {
@@ -217,6 +268,8 @@
     normalizePaperTypes: normalizePaperTypes,
     buildFilters: buildFilters,
     countFilters: countFilters,
+    buildSearchBody: buildSearchBody,
+    searchSummary: searchSummary,
     metadataLine: metadataLine
   };
 });
