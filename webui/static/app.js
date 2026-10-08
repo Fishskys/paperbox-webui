@@ -135,8 +135,10 @@
         .then(function (payload) {
           if (!response.ok) {
             var detail = payload && payload.detail ? JSON.stringify(payload.detail) : "";
+            /* 鉴权失败时后端会附一条可执行的 hint（key 在服务端，浏览器看不到原因）。 */
+            var hint = payload && payload.hint ? String(payload.hint) : "";
             var error = new Error(
-              "HTTP " + response.status + (detail ? "：" + detail : "")
+              "HTTP " + response.status + (detail ? "：" + detail : "") + (hint ? "；" + hint : "")
             );
             error.status = response.status;
             error.payload = payload;

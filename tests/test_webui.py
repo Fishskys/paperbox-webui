@@ -1420,3 +1420,70 @@ def test_index_loads_every_logic_module_before_app_js() -> None:
     for module in ("search-logic.js", "jobs-logic.js", "queue-logic.js"):
         assert f'src="/static/{module}"' in html, module
         assert html.index(module) < html.index("app.js"), module
+
+
+# --------------------------------------------------------------------------- #
+# 鉴权失败的三态（paperbox 0.4.0+：401 缺凭证 / 403 不匹配 / 403 档位不足）
+# --------------------------------------------------------------------------- #
+
+
+def test_a_401_is_labelled_as_a_missing_key() -> None:
+    """401 means no credential reached paperbox at all.
+
+    The BFF's key lives server side, so the cause is our own ``.env``; pass the
+    status and detail through untouched and add a hint naming the variable.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"detail": "Missing API key"})
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/papers")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing API key"
+    assert "PAPERBOX_API_KEY" in response.json()["hint"]
+
+
+def test_a_403_on_an_unmatched_key_points_at_rotation() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "Invalid API key"})
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/papers")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid API key"
+    hint = response.json()["hint"]
+    assert "manage_keys.py" in hint, "the hint must name the tool that rotates keys"
+
+
+def test_a_403_on_a_low_tier_points_at_the_role() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "detail": "insufficient role: this key is 'read', this endpoint "
+                "needs 'admin' or higher"
+            },
+        )
+
+    client, _ = build_app(handler)
+    response = client.delete("/api/ui/papers/11111111-1111-1111-1111-111111111111")
+
+    assert response.status_code == 403
+    hint = response.json()["hint"]
+    assert "write" in hint and "admin" in hint, hint
+
+
+def test_other_error_statuses_gain_no_hint() -> None:
+    """Only the auth statuses carry a hint -- a 404 stays exactly as paperbox sent it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "paper not found"})
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/papers/11111111-1111-1111-1111-111111111111")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "paper not found"}

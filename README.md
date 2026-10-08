@@ -41,6 +41,18 @@ copy .env.example .env                   # 首次：填 PAPERBOX_API_BASE / PAPE
 uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088
 ```
 
+`PAPERBOX_API_KEY` **不是**随便填的：paperbox 开了鉴权（`AUTH_ENABLED=true`）后，本 WebUI 需要一把
+**`admin` 档位**的 key（它代理了删除等写操作）。在 paperbox 目录签发，把打印出来的密钥填进本仓库的 `.env`：
+
+```powershell
+cd <paperbox 目录>
+uv run python scripts/manage_keys.py create --name paperbox-webui --prefix webui --role admin
+uv run python scripts/manage_keys.py list      # 复核：prefix=webui、role=admin
+```
+
+密钥**只写 `.env`**（已在 `.gitignore` 第 1 行，任何情况下不进 git；`.env.example` 只有占位值）。
+换 key：create 新前缀 → 改 `.env` → 重启 WebUI → `revoke` 旧前缀。
+
 浏览器打开 **http://127.0.0.1:8088/**。
 
 `.env` 项：
@@ -48,7 +60,7 @@ uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088
 | 变量 | 说明 |
 |------|------|
 | `PAPERBOX_API_BASE` | paperbox 地址，默认 `http://127.0.0.1:8077` |
-| `PAPERBOX_API_KEY` | 与 paperbox `.env` 里的 `PAPER_API_KEY` 一致 |
+| `PAPERBOX_API_KEY` | paperbox 签发的 `admin` key（见上）。**不再复用** paperbox 的 `PAPER_API_KEY` |
 | `WEBUI_HOST` / `WEBUI_PORT` | 本服务监听地址与端口（默认 `0.0.0.0:8088`） |
 | `REQUEST_TIMEOUT` | 普通请求超时秒数（默认 30；导入用 60） |
 | `WEBUI_UPLOAD_CONCURRENCY` | 上传队列的同时在途请求数（默认 **2**）。**保持 ≤ paperbox 的 `INGEST_UPLOAD_CONCURRENCY`**（默认也是 2），调大只会吃到 429 |
