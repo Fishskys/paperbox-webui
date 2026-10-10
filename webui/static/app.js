@@ -155,9 +155,17 @@
   /* ---------------- 顶部状态条 ---------------- */
 
   function applyServiceChip(chip, value) {
+    var name = chip.getAttribute("data-service");
+    /* paperbox 对"配了才探"的依赖（如解析后端 docling）报 disabled：
+     * 那是"没配"，不是"坏了"，涂成红色会冤枉一套只用 pypdf 的部署。 */
+    if (value === "disabled") {
+      chip.className = "chip chip-pending";
+      chip.textContent = name + " · disabled";
+      return;
+    }
     var ok = value === "ok";
     chip.className = "chip " + (ok ? "chip-ok" : "chip-error");
-    chip.textContent = chip.getAttribute("data-service") + " · " + (ok ? "ok" : text(value, "error"));
+    chip.textContent = name + " · " + (ok ? "ok" : text(value, "error"));
   }
 
   function loadHealth() {

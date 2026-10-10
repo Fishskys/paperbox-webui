@@ -51,6 +51,8 @@ HEALTH_BODY = {
         "opensearch": "ok",
         "minio": "ok",
         "embedding": "ok",
+        # 解析后端：paperbox 配了 DOCLING_URL 就探，没配报 disabled（不是 error）
+        "docling": "ok",
     },
 }
 
@@ -1726,3 +1728,42 @@ def test_the_ingest_tab_offers_both_new_entry_points() -> None:
         assert symbol in body, symbol
     # 界面要说清不是浏览器上传（否则用户会以为选了本地文件夹就传上去了）
     assert "同挂载卷" in html or "服务端路径" in html
+
+
+def test_the_status_bar_carries_a_docling_chip() -> None:
+    """状态条要有一格 docling，且 paperbox 报 disabled 时不能涂成红色。"""
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    assert 'data-service="docling"' in html, "状态条缺 docling 那一格"
+    # 顺序与 paperbox 的 services 一致：postgres/opensearch/minio/embedding/docling
+    assert html.index('data-service="embedding"') < html.index('data-service="docling"')
+    for symbol in ("applyServiceChip", 'value === "disabled"', "chip-pending"):
+        assert symbol in body, symbol
+    # 明确区分三态：ok → 绿、disabled → 中性、其余 → 红
+    assert 'chip.className = "chip " + (ok ? "chip-ok" : "chip-error")' in body
+
+
+def test_a_disabled_dependency_is_passed_through_untouched() -> None:
+    """BFF 不做解释：paperbox 说 disabled 就原样透传，由界面决定怎么显示。"""
+    payload = {
+        "status": "ok",
+        "version": "0.4.1",
+        "services": {"postgres": "ok", "opensearch": "ok", "minio": "ok",
+                     "embedding": "ok", "docling": "disabled"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return ok_json(payload)
+        if request.url.path == "/api/papers":
+            return ok_json({"total": 0, "limit": 20, "offset": 0, "papers": []})
+        if request.url.path == "/api/jobs":
+            return ok_json({"total": 0, "jobs": []})
+        return httpx.Response(404, json={"detail": "unexpected"})
+
+    client, _ = build_app(handler)
+    body = client.get("/api/ui/health").json()
+    assert body["paperbox"]["docling"] == "disabled"
+    assert body["paperbox"] == payload["services"]

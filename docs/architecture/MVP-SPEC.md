@@ -242,7 +242,7 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
 
 1. `uv run pytest` 全绿。
 2. 后台起 `uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088`，然后：
-   - `curl -s http://127.0.0.1:8088/api/ui/health` → 四个依赖 ok + papers/jobs 统计
+   - `curl -s http://127.0.0.1:8088/api/ui/health` → 五个依赖（含 docling）ok + papers/jobs 统计
    - `curl -s "http://127.0.0.1:8088/api/ui/papers?limit=5"` → 4 篇论文
    - `curl -s -X POST http://127.0.0.1:8088/api/ui/search -H 'Content-Type: application/json' -d "{\"query\":\"attention\",\"mode\":\"hybrid\",\"top_k\":3}"` → 带 evidence 的结果
    - `curl -s http://127.0.0.1:8088/ | head -c 200` → HTML
