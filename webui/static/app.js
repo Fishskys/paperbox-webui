@@ -57,6 +57,7 @@
       reviewConflictsPage: 1
     },
     config: null,
+    reindex: null,
     serverQueued: null,     // paperbox 侧的排队深度（/api/ui/jobs/queue 的 queued）
     queue: {
       items: [],
@@ -2268,6 +2269,87 @@
       });
   }
 
+  /* 「重建全库索引」：先预览（paperbox 侧 dry_run 默认 true），确认后才排队。
+   * 界面只放"全库重建"这一个口子 —— 只重建某几篇是运维/脚本的事（scripts/reindex.py）。 */
+  function loadReindexPreview() {
+    var summary = $("reindex-summary");
+    summary.textContent = "检测中…";
+    return api("/api/ui/papers/reindex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ include_all: true })
+    })
+      .then(function (data) {
+        state.reindex = data || {};
+        renderReindexPreview(state.reindex);
+      })
+      .catch(function (error) {
+        summary.textContent = "检测失败：" + error.message;
+        $("reindex-report").hidden = true;
+      });
+  }
+
+  function renderReindexPreview(data) {
+    var summary = $("reindex-summary");
+    clear(summary);
+    var count = RL.selectedCount(data);
+    summary.appendChild(
+      el("span", "chip " + (count ? "chip-pending" : "chip-ok"), count ? count + " 篇待重建" : "无需重建")
+    );
+
+    var reasons = $("reindex-reasons");
+    clear(reasons);
+    reasons.appendChild(el("p", "muted", RL.previewNote(data)));
+    RL.reasonLines(data, "reasons").forEach(function (line) {
+      reasons.appendChild(el("p", "muted", "· " + line));
+    });
+    RL.reasonLines(data, "skipped_reasons").forEach(function (line) {
+      reasons.appendChild(el("p", "muted", "（未采纳）" + line));
+    });
+    if (RL.skippedCount(data)) {
+      reasons.appendChild(el("p", "muted", "（有论文没有原始文件，会跳过并逐条列在响应里）"));
+    }
+    if (data && data.note) reasons.appendChild(el("p", "muted", String(data.note)));
+
+    var detail = $("reindex-detail");
+    detail.textContent = RL.censusLines(data).join("\n");
+
+    var confirm = $("btn-reindex-confirm");
+    confirm.textContent = RL.confirmLabel(data);
+    confirm.disabled = count === 0;
+    confirm.hidden = false;
+    $("btn-reindex-cancel").hidden = false;
+    $("reindex-report").hidden = false;
+  }
+
+  function cancelReindexPreview() {
+    state.reindex = null;
+    $("reindex-report").hidden = true;
+    $("reindex-summary").textContent = "尚未检查";
+  }
+
+  function queueReindex() {
+    var count = RL.selectedCount(state.reindex);
+    if (!count) return;
+    if (!window.confirm("确认重建全库索引？会重新解析并重嵌 " + count + " 篇，小时级操作。")) return;
+    var confirm = $("btn-reindex-confirm");
+    confirm.disabled = true;
+    api("/api/ui/papers/reindex", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ include_all: true, dry_run: false })
+    })
+      .then(function (data) {
+        toast("已排队 " + text(data.queued, 0) + " 个重建作业 · 去「作业」标签页看进度", "info");
+        cancelReindexPreview();
+        loadJobs();
+      })
+      .catch(function (error) {
+        confirm.disabled = false;
+        toast("排队失败：" + error.message, "warn");
+      });
+  }
+
   function pageSizeOf(inputId, fallback) {
     var node = $(inputId);
     var value = Number(node && node.value);
@@ -2679,6 +2761,9 @@
     });
     $("btn-metadata-prefill").addEventListener("click", prefillApplyEntries);
     $("btn-metadata-report-clear").addEventListener("click", clearMetadataReport);
+    $("btn-reindex-preview").addEventListener("click", loadReindexPreview);
+    $("btn-reindex-confirm").addEventListener("click", queueReindex);
+    $("btn-reindex-cancel").addEventListener("click", cancelReindexPreview);
     $("metadata-sources-prev").addEventListener("click", function () {
       state.metadata.sourcesPage -= 1;
       renderMetadataSources();

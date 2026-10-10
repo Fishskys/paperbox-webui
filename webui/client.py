@@ -336,6 +336,10 @@ class PaperboxClient:
     async def search(self, payload: dict[str, Any]) -> PaperboxResponse:
         return await self._request("POST", "/api/search", json=payload)
 
+    async def reindex_library(self, payload: dict[str, Any]) -> PaperboxResponse:
+        """``POST /api/papers/reindex`` -- 批量重建（paperbox 侧默认 dry_run）。"""
+        return await self._request("POST", "/api/papers/reindex", json=payload)
+
     async def reindex(self, paper_id: str) -> PaperboxResponse:
         return await self._request(
             "POST",

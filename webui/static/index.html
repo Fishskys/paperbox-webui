@@ -202,6 +202,28 @@
           <span id="library-page-info">第 1 页</span>
           <button type="button" class="btn btn-ghost" id="library-next">下一页</button>
         </div>
+
+        <div class="card" id="reindex-card">
+          <h2>重建全库索引 <span class="muted" id="reindex-summary">尚未检查</span></h2>
+          <p class="muted">
+            重新解析 / 重新分块 / 重新嵌入 / 重建索引 —— 服务于两种真实场景：
+            <strong>换了 embedding 模型</strong>（旧向量与新查询不可比）与
+            <strong>从 pypdf 换成 docling</strong>（不重新解析就吃不到新产物）。
+            按钮一律**整库**重建（这里不放"只重建某几篇"的口子）；点一下先看检测结果与影响面，
+            确认后才排队。整库是小时级操作，队列按 <code>INGEST_CONCURRENCY</code> 串行跑。
+          </p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-reindex-preview">重建全库索引</button>
+          </div>
+          <div id="reindex-report" hidden>
+            <p class="muted" id="reindex-reasons"></p>
+            <pre class="muted" id="reindex-detail"></pre>
+            <div class="form-actions">
+              <button type="button" class="btn btn-danger" id="btn-reindex-confirm" hidden>确认：排队重建这 N 篇</button>
+              <button type="button" class="btn btn-ghost" id="btn-reindex-cancel" hidden>取消</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- Tab 3: 导入（多选 + 上传队列） -->
@@ -605,6 +627,7 @@
     <script src="/static/queue-logic.js"></script>
     <script src="/static/consistency-logic.js"></script>
     <script src="/static/metadata-logic.js"></script>
+    <script src="/static/reindex-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

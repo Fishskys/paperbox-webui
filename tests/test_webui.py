@@ -1920,3 +1920,48 @@ def test_no_bare_conflicts_identifier_survives_in_app_js() -> None:
 
     bare = re.findall(r"(?<![\w.])conflicts\b", code)
     assert bare == [], f"app.js 里还有 {len(bare)} 处裸用 conflicts（应为 state.metadata.reviewConflicts）"
+
+
+def test_the_library_tab_can_rebuild_the_whole_index() -> None:
+    """论文库里的「重建全库索引」：先预览（检测结果 + 影响面），确认后才排队。
+
+    界面刻意只放**全库**这一个口子 —— 只重建某几篇是运维/脚本的事（scripts/reindex.py）。
+    预览必须说清"几篇、为什么"，并且"无需重建"也要说出来，不能糊成"正在忙"。
+    """
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    library = html.split('id="panel-library"')[1].split("</section>")[0]
+    for element in (
+        'id="btn-reindex-preview"',
+        'id="btn-reindex-confirm"',
+        'id="btn-reindex-cancel"',
+        'id="reindex-reasons"',
+        'id="reindex-detail"',
+    ):
+        assert element in library, element
+    assert "embedding 模型" in library and "pypdf" in library, "要说清它服务哪两种场景"
+    assert "小时级" in library, "要说清代价，别让人以为点一下就好"
+
+    # 一律整库：请求体里只能是 include_all，不许出现 paper_ids
+    for fn in ("loadReindexPreview", "queueReindex"):
+        body_fn = body.split("function " + fn)[1].split("\n  function ")[0]
+        assert "include_all: true" in body_fn, fn
+        assert "paper_ids" not in body_fn, fn
+    preview = body.split("function loadReindexPreview")[1].split("\n  function ")[0]
+    assert 'dry_run' not in preview, "预览就是 preview：不带 dry_run 才是 paperbox 的默认试运行"
+    confirm = body.split("function queueReindex")[1].split("\n  function ")[0]
+    assert "dry_run: false" in confirm
+    assert "window.confirm(" in confirm, "写库前要一次确认"
+
+    # 讲清影响面 + 无需重建也要说
+    assert "RL.confirmLabel(" in body and "RL.previewNote(" in body and "RL.censusLines(" in body
+
+
+def test_the_bulk_reindex_route_exists_on_the_bff() -> None:
+    from webui.routers import actions as action_routes
+
+    paths = {route.path for route in action_routes.router.routes}
+    assert "/papers/reindex" in paths, "批量重建必须有自己的转发路由"
+    assert "/papers/{paper_id}/reindex" in paths, "单篇那个不能被顶掉"

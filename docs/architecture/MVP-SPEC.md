@@ -206,6 +206,11 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
    * 库内字段冲突（`recorded_conflicts`，全库、paperbox 侧上限 50）仍归**复核清单**卡片，
      同样分页（默认每页 3、可改，自己那一个输入框）—— 此前它写的是报告卡那张表，
      看起来像本次导入的结果。
+   * **论文库 · 重建全库索引**（2026-10-10）：卡片里一个按钮，走
+     `POST /api/ui/papers/reindex` → paperbox 的 `POST /api/papers/reindex`。**先预览再确认**：
+     预览显示"几篇待重建 + 每条理由 + 当前模型/解析戳普查"，确认按钮直接写清篇数。界面刻意
+     只放**全库**重建（不带 `paper_ids`）——只重建某几篇是 `scripts/reindex.py` 的事。
+     讲人话的部分在 `webui/static/reindex-logic.js`（原因码→中文、影响面文案、"无需重建"也要明说）。
    * **冲突可裁决**（2026-10-10）：每行「操作」列两个按钮 —— 「采纳被拒值」打
      `POST /api/ui/papers/{id}/metadata/rollback`，「保留现值」打
      `POST /api/ui/papers/{id}/metadata/conflicts/dismiss`。裁决完自动刷新清单。两条路都不删声明，
