@@ -1,9 +1,11 @@
 /* paperbox 控制台：元数据导入报告的纯逻辑测试（node:test）。
  *
- * 为什么单独有这么一个模块：报告一次可能带 5000+ 行来源（真机 IEEE 批次 5933 条），
- * 全铺出来会把下面的复核清单、批量应用顶出屏幕；而"截了多少"必须如实说出来，
- * 不能悄悄吞掉。另外「来源类型」这一列曾经永远是空的 —— paperbox 的
- * /api/metadata/import 响应里根本没有 source_type 字段，它只该出现在摘要行。
+ * 三组用例，各自对应一次真机翻车：
+ *   1. 分页：一次导入可能有 5933 条来源，不能全铺；默认每页 5 条（冲突 3 条）、可改，
+ *      最后一页不能空、页码越界要夹住。
+ *   2. 优先级：未匹配 → 歧义 → 其余，需要人动手的排前面；同组内保持 paperbox 的顺序。
+ *   3. 行规格：**长度恒为 4**。真机上出现过"表头 4 列、内容 5 列、中间多一个 —"，
+ *      根因是单元格在渲染里逐个 append、多一个少一个没人管。
  */
 
 import test from "node:test";
@@ -13,37 +15,141 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const ML = require("../../webui/static/metadata-logic.js");
 
-test("capRows keeps the head and reports exactly how many are hidden", () => {
-  const items = Array.from({ length: 5933 }, (_, index) => ({ source_ref: `doi:${index}` }));
+const sources = (count) =>
+  Array.from({ length: count }, (_, index) => ({
+    source_ref: `doi:10.1/${index}`,
+    match_status: "matched",
+    match_method: "doi"
+  }));
 
-  const capped = ML.capRows(items, 50);
+test("sources default to 5 per page and conflicts to 3", () => {
+  assert.equal(ML.SOURCES_PAGE_SIZE, 5);
+  assert.equal(ML.CONFLICTS_PAGE_SIZE, 3);
 
-  assert.equal(capped.rows.length, 50);
-  assert.equal(capped.hidden, 5883);
-  assert.equal(capped.total, 5933, "总数必须保留，界面靠它说明截断");
-  assert.equal(capped.rows[0].source_ref, "doi:0");
+  assert.equal(ML.paginate(sources(40), 1, ML.SOURCES_PAGE_SIZE).rows.length, 5);
+  assert.equal(ML.paginate(sources(40), 1, ML.CONFLICTS_PAGE_SIZE).rows.length, 3);
 });
 
-test("capRows is a no-op when the report is short", () => {
-  const capped = ML.capRows([{ a: 1 }, { a: 2 }], 50);
+test("pagination reports the window and the page count", () => {
+  const result = ML.paginate(sources(12), 2, 5);
 
-  assert.equal(capped.rows.length, 2);
-  assert.equal(capped.hidden, 0);
-  assert.equal(ML.hiddenNote(capped.hidden, capped.total, "来源"), "", "没截断就不该有提示行");
+  assert.equal(result.page, 2);
+  assert.equal(result.pageCount, 3);
+  assert.equal(result.first, 6);
+  assert.equal(result.last, 10);
+  assert.equal(result.total, 12);
+  assert.equal(result.rows.length, 5);
 });
 
-test("capRows survives missing or junk input", () => {
-  assert.deepEqual(ML.capRows(undefined, 50).rows, []);
-  assert.equal(ML.capRows(null, 50).total, 0);
-  assert.equal(ML.capRows([1, 2, 3], 0).rows.length, 3, "limit 非法时退回默认上限");
+test("the last page holds the remainder instead of going empty", () => {
+  const result = ML.paginate(sources(12), 3, 5);
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.first, 11);
+  assert.equal(result.last, 12);
 });
 
-test("hiddenNote says how many and out of what", () => {
-  const note = ML.hiddenNote(5883, 5933, "来源");
+test("an out-of-range page is clamped, not honoured", () => {
+  assert.equal(ML.paginate(sources(12), 99, 5).page, 3);
+  assert.equal(ML.paginate(sources(12), 0, 5).page, 1);
+  assert.equal(ML.paginate(sources(12), -4, 5).page, 1);
+  assert.equal(ML.paginate([], 3, 5).pageCount, 1, "空列表也算一页，别显示 第 0/0 页");
+});
 
-  assert.match(note, /5883/);
-  assert.match(note, /5933/);
-  assert.match(note, /来源/);
+test("a broken page size falls back to the default", () => {
+  assert.equal(ML.paginate(sources(10), 1, 0).pageSize, ML.SOURCES_PAGE_SIZE);
+  assert.equal(ML.paginate(sources(10), 1, "abc").pageSize, ML.SOURCES_PAGE_SIZE);
+  assert.equal(ML.paginate(sources(11), 1, 10).pageCount, 2);
+});
+
+test("pageSummary spells out the window, the total and the page", () => {
+  const line = ML.pageSummary(ML.paginate(sources(5933), 1, 5));
+
+  assert.match(line, /第 1–5 条/);
+  assert.match(line, /共 5933 条/);
+  assert.match(line, /第 1\/1187 页/);
+  assert.equal(ML.pageSummary(ML.paginate([], 1, 5)), "共 0 条");
+});
+
+test("unmatched and ambiguous rows come first, stably", () => {
+  const items = [
+    { source_ref: "a", match_status: "matched" },
+    { source_ref: "b", match_status: "unmatched" },
+    { source_ref: "c", match_status: "ambiguous" },
+    { source_ref: "d", match_status: "matched" },
+    { source_ref: "e", match_status: "unmatched" }
+  ];
+
+  const sorted = ML.sortForReview(items).map((item) => item.source_ref);
+
+  /* unmatched 组（b, e）→ ambiguous（c）→ 其余按原顺序（a, d） */
+  assert.deepEqual(sorted, ["b", "e", "c", "a", "d"]);
+});
+
+test("sortForReview tolerates a missing status and junk input", () => {
+  assert.deepEqual(ML.sortForReview(undefined), []);
+  const sorted = ML.sortForReview([
+    { source_ref: "x" },
+    { source_ref: "y", match_status: "unmatched" }
+  ]);
+  assert.deepEqual(sorted.map((item) => item.source_ref), ["y", "x"]);
+  assert.equal(ML.priorityOf("UNMATCHED"), 0, "状态大小写不该影响优先级");
+  assert.equal(ML.priorityOf(undefined), 2);
+});
+
+test("a source row is exactly four cells -- no phantom 来源类型 column", () => {
+  const row = ML.sourcesRow({
+    source_ref: "doi:10.1/x",
+    match_status: "matched",
+    match_method: "doi",
+    paper_id: "p-1",
+    /* 就算 paperbox 以后真给了 source_type，也不该变成第 5 格 */
+    source_type: "ieee_api"
+  });
+
+  assert.equal(row.length, 4);
+  assert.equal(row[0].text, "doi:10.1/x");
+  assert.equal(row[1].text, "已匹配");
+  assert.equal(row[2].text, "doi");
+  assert.equal(row[3].kind, "paper");
+  assert.ok(
+    row.every((cell) => cell.text !== "ieee_api"),
+    "来源类型只出现在摘要行，不进表格"
+  );
+});
+
+test("an unmatched source row shows the note where the paper would be", () => {
+  const row = ML.sourcesRow({ source_ref: "x", match_status: "unmatched", note: "no candidate" });
+
+  assert.equal(row.length, 4);
+  assert.equal(row[1].text, "未匹配");
+  assert.equal(row[2].text, "—");
+  assert.equal(row[3].kind, "note");
+  assert.equal(row[3].text, "no candidate");
+});
+
+test("a conflict row is exactly four cells and flattens list values", () => {
+  const row = ML.conflictRow({
+    paper_id: "p-1",
+    field: "authors",
+    kept: ["Lei Wang", "Yuanzi Li"],
+    rejected: "single"
+  });
+
+  assert.equal(row.length, 4);
+  assert.equal(row[1].text, "authors");
+  assert.equal(row[2].text, "Lei Wang, Yuanzi Li");
+  assert.equal(row[3].text, "single");
+});
+
+test("missing values read as — rather than empty cells", () => {
+  const row = ML.conflictRow({});
+
+  assert.equal(row.length, 4);
+  assert.equal(row[1].text, "—");
+  assert.equal(row[2].text, "—");
+  assert.equal(ML.valueText(null), "—");
+  assert.equal(ML.valueText({ a: 1 }), '{"a":1}');
 });
 
 test("reportSummary carries the source type that the response does not", () => {
@@ -52,18 +158,37 @@ test("reportSummary carries the source type that the response does not", () => {
     "ieee_api"
   );
 
-  assert.match(line, /试运行/);
   assert.match(line, /来源 ieee_api/);
   assert.match(line, /格式 ieee_raw/);
   assert.match(line, /检测到 1103 条/);
+  assert.match(line, /命中已有论文 1102 条/);
   assert.match(line, /失败 1 条/);
 });
 
-test("reportSummary does not mention failures when there are none", () => {
-  const line = ML.reportSummary({ dry_run: false, format: "csl", detected: 5, matched: 5, failed: 0 }, "import_file");
+test("reportSummary leaves 试运行 to the chip -- no duplicate phrasing", () => {
+  /* 真机上一次是"试运行（未写库） · 试运行（未写库） · 来源 …"：chip 与摘要各说一遍。 */
+  const line = ML.reportSummary({ dry_run: true, format: "generic", detected: 12 }, "import_file");
 
-  assert.match(line, /已写入/);
+  assert.doesNotMatch(line, /试运行/);
+  assert.doesNotMatch(line, /已写入/);
+});
+
+test("reportSummary does not call a shell-creation run a total miss", () => {
+  /* paperbox 的 matched 是"命中已有论文"，造壳不算。只显示"匹配 0 条"会吓人。 */
+  const line = ML.reportSummary(
+    { dry_run: true, format: "generic", detected: 12, matched: 0, created_shell: 12 },
+    "import_file"
+  );
+
+  assert.match(line, /待补文件的新壳 12 条/);
+  assert.doesNotMatch(line, /命中已有论文/);
+});
+
+test("reportSummary does not mention failures when there are none", () => {
+  const line = ML.reportSummary({ dry_run: false, format: "csl", detected: 5, matched: 5 }, "import_file");
+
   assert.doesNotMatch(line, /失败/);
+  assert.match(line, /命中已有论文 5 条/);
 });
 
 test("matchLabel translates the statuses paperbox actually returns", () => {
@@ -71,9 +196,5 @@ test("matchLabel translates the statuses paperbox actually returns", () => {
   assert.equal(ML.matchLabel("ambiguous"), "歧义");
   assert.equal(ML.matchLabel("unmatched"), "未匹配");
   assert.equal(ML.matchLabel(undefined), "—");
-});
-
-test("an unknown status is shown as-is instead of vanishing", () => {
-  /* paperbox 加了新状态时，界面宁可显示英文原值，也不能显示成空。 */
-  assert.equal(ML.matchLabel("something_new"), "something_new");
+  assert.equal(ML.matchLabel("something_new"), "something_new", "未知状态原样显示，不能吞掉");
 });

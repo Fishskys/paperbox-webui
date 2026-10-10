@@ -470,19 +470,16 @@ code {
   background: var(--bg-elevated);
 }
 
-/* 元数据导入报告：可折叠 + 表体限高。报告一次可能带 5000+ 行来源，
-   不限高就会把下面的复核清单、批量应用顶到屏幕外。 */
-.report-card > summary {
-  display: flex;
-  flex-wrap: wrap;
+/* 元数据导入报告：分页 + 表体限高。一次导入可能带 5000+ 行来源，
+   既不能全铺（把下面的卡片顶出屏幕），也不折叠（分页要一直可见）。 */
+.field-inline {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  cursor: pointer;
+  gap: 6px;
 }
 
-.report-card > summary > h2 {
-  margin: 0;
+.field-inline input {
+  width: 72px;
 }
 
 .table-scroll {

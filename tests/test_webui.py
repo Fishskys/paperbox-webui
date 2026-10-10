@@ -1770,22 +1770,68 @@ def test_a_disabled_dependency_is_passed_through_untouched() -> None:
     assert body["paperbox"] == payload["services"]
 
 
-def test_the_metadata_report_can_be_collapsed_and_cleared() -> None:
-    """导入报告以前是一张铺到底的裸卡片：不能折、不能清，把下面两个卡片顶出屏幕。"""
+def test_the_metadata_report_is_paginated_not_collapsed() -> None:
+    """报告不再折叠，改成**分页**：一次导入可能有 5933 条来源。
+
+    每页条数可配，来源默认 5、字段冲突默认 3；未匹配/歧义排前面（见 metadata-logic 的用例）。
+    """
     client, _ = build_app(_static_handler)
     html = client.get("/").text
     body = client.get("/static/app.js").text
 
     assert 'id="metadata-report-card"' in html
-    # 折叠靠原生 <details>，别再手写一套显隐状态机
-    assert re.search(r'<details[^>]*id="metadata-report-card"', html)
-    assert 'id="btn-metadata-report-clear"' in html
-    assert "clearMetadataReport" in body
-    # 清空要连 state 一起清，否则"从报告预填"会拿到已清空的旧数据
-    assert "state.metadata.report = null;" in body
-    # 表体限高，长报告不再把后面的卡片推下去
+    # 折叠那一套已经拿掉：分页控件要一直可见
+    assert not re.search(r'<details[^>]*id="metadata-report-card"', html)
+    for element in (
+        'id="metadata-sources-page-size"',
+        'id="metadata-sources-prev"',
+        'id="metadata-sources-next"',
+    ):
+        assert element in html, element
+    # 默认每页条数写在输入框的 value 上，与 metadata-logic 的常量一致
+    for element_id, expected in (("metadata-sources-page-size", 5), ("metadata-conflicts-page-size", 3)):
+        tag = re.search(r'<input[^>]*id="%s"[^>]*>' % element_id, html)
+        assert tag, element_id
+        assert 'value="%d"' % expected in tag.group(0), tag.group(0)
+    # 分页查表在纯逻辑模块里，界面只负责渲染
+    assert "ML.paginate(" in body
+    assert "ML.sortForReview(" in body
+    assert "ML.pageSummary(" in body
+    # 表体仍然限高（每页条数可以调到 200）
     assert "table-scroll" in html
     assert ".table-scroll" in client.get("/static/style.css").text
+
+
+def test_the_clear_button_empties_both_blocks() -> None:
+    """真机上"清空报告"点不动：旧 JS 没有这个监听器（浏览器缓存）。
+
+    现在它一次清掉两块：导入报告（来源明细）与字段冲突，并且把 state 也清掉 ——
+    否则「从报告预填」会拿已清空的旧报告去预填 source_ref。
+    """
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    assert 'id="btn-metadata-report-clear"' in html
+    assert "报告 + 字段冲突" in html, "按钮文案要说清它清两块"
+    assert '$("btn-metadata-report-clear").addEventListener("click", clearMetadataReport);' in body
+
+    clearing = body.split("function clearMetadataReport")[1].split("\n  function ")[0]
+    for target in ("metadata-sources-body", "metadata-conflicts-body", "metadata-report-totals"):
+        assert target in clearing, target
+    assert "state.metadata.report = null;" in clearing
+    assert "renderImportConflicts()" in clearing, "清空后摘要/分页要把状态显示回「尚未导入」"
+
+
+def test_static_assets_are_revalidated() -> None:
+    """静态资源必须带 no-cache：真机上出现过浏览器用旧 app.js ——
+    新版 HTML 4 列表头配旧版 JS 5 列内容，错位；新按钮也没监听器。"""
+    client, _ = build_app(_static_handler)
+
+    for path in ("/static/app.js", "/static/style.css", "/"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "no-cache" in response.headers.get("cache-control", ""), path
 
 
 def test_the_report_tables_only_show_columns_that_carry_values() -> None:
@@ -1811,12 +1857,14 @@ def test_each_card_owns_its_own_conflict_table() -> None:
 
     assert 'id="metadata-conflicts-body"' in html
     assert 'id="metadata-review-conflicts-body"' in html
-    # 导入报告的渲染只碰自己那张表
-    report_fn = body.split("function renderMetadataReport")[1].split("function paintMoreNote")[0]
-    assert 'metadata-conflicts-body' in report_fn
+    # 本次导入的冲突由 renderImportConflicts 渲染，报告渲染本身不直接碰任何冲突表
+    report_fn = body.split("function renderMetadataReport")[1].split("function clearMetadataReport")[0]
+    assert "renderImportConflicts()" in report_fn
     assert "metadata-review-conflicts-body" not in report_fn
-    # 复核清单的 loader 只碰自己那张表（切到下一个顶层函数为止，
-    # 注意别切在里面的匿名 function 上）
+    # 复核清单的 loader 把全库冲突交给 renderReviewConflicts（它才碰复核卡那张表），
+    # 绝不碰导入报告卡的表
     review_fn = body.split("function loadMetadataReview")[1].split("\n  function ")[0]
-    assert "metadata-review-conflicts-body" in review_fn
+    assert "renderReviewConflicts(" in review_fn
     assert "metadata-conflicts-body" not in review_fn
+    review_render = body.split("function renderReviewConflicts")[1].split("\n  function ")[0]
+    assert "metadata-review-conflicts-body" in review_render

@@ -71,6 +71,16 @@ def create_app() -> FastAPI:
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+        # 静态资源必须每次回源校验：真机上出现过浏览器继续用旧 app.js 的情形 ——
+        # 新版 HTML（表头 4 列）配旧版 JS（内容 5 列）就错位，新加的按钮也没监听器。
+        # ``no-cache`` = 仍可缓存但每次带 ETag 校验，回 304 时几乎不花流量。
+        @app.middleware("http")
+        async def _revalidate_static(request, call_next):  # noqa: ANN001, ANN202
+            response = await call_next(request)
+            if request.url.path.startswith("/static/") or request.url.path == "/":
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
     return app
 
 

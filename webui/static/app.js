@@ -49,7 +49,13 @@
     jobs: { offset: 0, total: 0, limit: 20 },
     jobsAutoTimer: null,
     consistencyTimer: null,
-    metadata: { report: null },
+    metadata: {
+      report: null,
+      reviewConflicts: [],
+      sourcesPage: 1,
+      conflictsPage: 1,
+      reviewConflictsPage: 1
+    },
     config: null,
     serverQueued: null,     // paperbox 侧的排队深度（/api/ui/jobs/queue 的 queued）
     queue: {
@@ -2179,10 +2185,129 @@
       });
   }
 
-  /* 报告卡片是可折叠的 <details>；摘要行里的来源类型来自表单（响应里没有这个字段，
-   * 所以它只在摘要出现一次，不再做一列永远为空的「来源类型」）。 */
+  /* 行由 ML 给出"单元格规格"数组，这里只负责把规格变成元素。
+   * 这么绕是因为真机上出过"表头 4 列、内容 5 列、中间多一个 —"：单元格以前是在渲染里
+   * 逐个 append 的，多一个少一个没人管；现在列数在 ML.sourcesRow / ML.conflictRow 里定死，
+   * 并有用例断言长度为 4。 */
+  function rowFromSpecs(specs, rowClass) {
+    var tr = el("tr", rowClass || null);
+    (specs || []).forEach(function (spec) {
+      var cell = el("td", spec.kind === "ref" || spec.kind === "paper" ? "cell-id" : null);
+      if (spec.kind === "ref") {
+        cell.appendChild(el("code", null, spec.text));
+      } else if (spec.kind === "paper") {
+        if (spec.text) {
+          var link = el("button", "link-title", "打开");
+          link.type = "button";
+          (function (paperId) {
+            link.addEventListener("click", function () {
+              openDetail(paperId);
+            });
+          })(spec.text);
+          cell.appendChild(link);
+          cell.appendChild(el("code", "muted", spec.text));
+        } else {
+          cell.appendChild(el("span", "muted", "—"));
+        }
+      } else if (spec.kind === "kept") {
+        cell.className = "cell-error";
+        cell.textContent = spec.text;
+      } else if (spec.kind === "note") {
+        cell.appendChild(el("span", "muted", spec.text));
+      } else {
+        cell.textContent = spec.text;
+      }
+      tr.appendChild(cell);
+    });
+    return tr;
+  }
+
+  function pageSizeOf(inputId, fallback) {
+    var node = $(inputId);
+    var value = Number(node && node.value);
+    return value >= 1 ? Math.floor(value) : fallback;
+  }
+
+  function paintPager(summaryId, result, prevId, nextId) {
+    $(summaryId).textContent = ML.pageSummary(result);
+    $(prevId).disabled = result.page <= 1;
+    $(nextId).disabled = result.page >= result.pageCount;
+  }
+
+  /* 来源明细单独一页一页铺：一次导入可能有 5933 条，全铺出来没法看；
+   * 排序把"未匹配/歧义"顶到前面，需要人动手的先看到。 */
+  function renderMetadataSources() {
+    var report = state.metadata.report || {};
+    var sorted = ML.sortForReview(report.sources);
+    var size = pageSizeOf("metadata-sources-page-size", ML.SOURCES_PAGE_SIZE);
+    var result = ML.paginate(sorted, state.metadata.sourcesPage, size);
+    state.metadata.sourcesPage = result.page;
+
+    var body = $("metadata-sources-body");
+    clear(body);
+    result.rows.forEach(function (item) {
+      body.appendChild(rowFromSpecs(ML.sourcesRow(item)));
+    });
+    $("metadata-sources-empty").hidden = result.total > 0;
+    paintPager("metadata-sources-pager-summary", result, "metadata-sources-prev", "metadata-sources-next");
+  }
+
+  /* 字段冲突是**独立一块**（本次导入的合并决策），与上面的来源明细解耦。 */
+  function renderImportConflicts() {
+    var report = state.metadata.report || {};
+    var all = Array.isArray(report.conflicts) ? report.conflicts : [];
+    var size = pageSizeOf("metadata-conflicts-page-size", ML.CONFLICTS_PAGE_SIZE);
+    var result = ML.paginate(all, state.metadata.conflictsPage, size);
+    state.metadata.conflictsPage = result.page;
+
+    var body = $("metadata-conflicts-body");
+    clear(body);
+    result.rows.forEach(function (item) {
+      body.appendChild(rowFromSpecs(ML.conflictRow(item)));
+    });
+    $("metadata-conflicts-empty").hidden = result.total > 0;
+    paintPager("metadata-conflicts-pager-summary", result, "metadata-conflicts-prev", "metadata-conflicts-next");
+
+    var summary = $("metadata-conflicts-summary");
+    clear(summary);
+    if (!state.metadata.report) {
+      summary.textContent = "尚未导入";
+    } else {
+      summary.appendChild(
+        el(
+          "span",
+          "chip " + (all.length ? "chip-info" : "chip-ok"),
+          all.length ? all.length + " 条待人工确认" : "无冲突"
+        )
+      );
+    }
+  }
+
+  /* 复核清单里的库内冲突：同一套分页渲染，只是数据源不同（全库、不是本次导入）。 */
+  function renderReviewConflicts(items) {
+    var all = Array.isArray(items) ? items : [];
+    var size = pageSizeOf("metadata-conflicts-page-size", ML.CONFLICTS_PAGE_SIZE);
+    var result = ML.paginate(all, state.metadata.reviewConflictsPage, size);
+    state.metadata.reviewConflictsPage = result.page;
+
+    var body = $("metadata-review-conflicts-body");
+    clear(body);
+    result.rows.forEach(function (item) {
+      body.appendChild(rowFromSpecs(ML.conflictRow(item)));
+    });
+    $("metadata-review-conflicts-empty").hidden = result.total > 0;
+    paintPager(
+      "metadata-review-conflicts-pager-summary",
+      result,
+      "metadata-review-conflicts-prev",
+      "metadata-review-conflicts-next"
+    );
+  }
+
   function renderMetadataReport(report, sourceType) {
     state.metadata.report = report;
+    state.metadata.sourcesPage = 1;
+    state.metadata.conflictsPage = 1;
     paintTotals($("metadata-report-totals"), METADATA_TOTALS, report);
 
     var summary = $("metadata-report-summary");
@@ -2196,90 +2321,32 @@
     );
     summary.appendChild(el("span", null, " · " + ML.reportSummary(report, sourceType)));
 
-    var sourceBody = $("metadata-sources-body");
-    clear(sourceBody);
-    var capped = ML.capRows(report.sources, ML.ROW_LIMIT);
-    capped.rows.forEach(function (item) {
-      var tr = el("tr");
-      var refCell = el("td", "cell-id");
-      refCell.appendChild(el("code", null, text(item.source_ref, "—")));
-      tr.appendChild(refCell);
-      var statusCell = el("td");
-      statusCell.appendChild(el("span", null, ML.matchLabel(item.match_status)));
-      if (item.paper_id) statusCell.title = item.paper_id;
-      tr.appendChild(statusCell);
-      tr.appendChild(el("td", null, text(item.match_method, "—")));
-      var paperCell = el("td", "cell-id");
-      if (item.paper_id) {
-        var link = el("button", "link-title", "打开");
-        link.type = "button";
-        link.addEventListener("click", function () {
-          openDetail(item.paper_id);
-        });
-        paperCell.appendChild(link);
-        paperCell.appendChild(el("code", "muted", item.paper_id));
-      } else {
-        paperCell.appendChild(el("span", "muted", text(item.note, "—")));
-      }
-      tr.appendChild(paperCell);
-      sourceBody.appendChild(tr);
-    });
-    $("metadata-sources-empty").hidden = capped.total > 0;
-    paintMoreNote("metadata-sources-more", capped, "来源");
-
-    var conflictBody = $("metadata-conflicts-body");
-    clear(conflictBody);
-    var conflicts = ML.capRows(report.conflicts, ML.ROW_LIMIT);
-    conflicts.rows.forEach(function (item) {
-      conflictBody.appendChild(renderConflictRow(item));
-    });
-    $("metadata-conflicts-empty").hidden = conflicts.total > 0;
-    paintMoreNote("metadata-conflicts-more", conflicts, "冲突");
+    renderMetadataSources();
+    renderImportConflicts();
   }
 
-  function paintMoreNote(elementId, capped, noun) {
-    var node = $(elementId);
-    var note = ML.hiddenNote(capped.hidden, capped.total, noun);
-    node.textContent = note;
-    node.hidden = !note;
-  }
-
-  /* 清空报告：连 state 一起清，避免「从报告预填」拿到已清空的旧数据。 */
+  /* 清空：**同时**清掉导入报告与字段冲突两块，并把 state 一起清掉
+   * （否则「从报告预填」会拿已清空的旧报告去预填 source_ref）。
+   * 复核清单的库内冲突不属于"导入报告"，不在这里清。 */
   function clearMetadataReport() {
     state.metadata.report = null;
+    state.metadata.sourcesPage = 1;
+    state.metadata.conflictsPage = 1;
     clear($("metadata-report-totals"));
     clear($("metadata-sources-body"));
     clear($("metadata-conflicts-body"));
     $("metadata-sources-empty").hidden = true;
     $("metadata-conflicts-empty").hidden = true;
-    paintMoreNote("metadata-sources-more", { hidden: 0, total: 0 }, "来源");
-    paintMoreNote("metadata-conflicts-more", { hidden: 0, total: 0 }, "冲突");
+    $("metadata-sources-pager-summary").textContent = "共 0 条";
+    $("metadata-conflicts-pager-summary").textContent = "共 0 条";
+    $("metadata-sources-prev").disabled = true;
+    $("metadata-sources-next").disabled = true;
+    $("metadata-conflicts-prev").disabled = true;
+    $("metadata-conflicts-next").disabled = true;
     var summary = $("metadata-report-summary");
     clear(summary);
     summary.textContent = "尚未导入";
-    var card = $("metadata-report-card");
-    if (card) card.open = false;
-  }
-
-  function renderConflictRow(item) {
-    var tr = el("tr");
-    var paperCell = el("td", "cell-id");
-    if (item.paper_id) {
-      var link = el("button", "link-title", "打开");
-      link.type = "button";
-      link.addEventListener("click", function () {
-        openDetail(item.paper_id);
-      });
-      paperCell.appendChild(link);
-      paperCell.appendChild(el("code", "muted", item.paper_id));
-    } else {
-      paperCell.appendChild(el("span", "muted", "—"));
-    }
-    tr.appendChild(paperCell);
-    tr.appendChild(el("td", null, text(item.field, "—")));
-    tr.appendChild(el("td", "cell-error", valueText(item.kept)));
-    tr.appendChild(el("td", null, valueText(item.rejected)));
-    return tr;
+    renderImportConflicts();
   }
 
   function loadMetadataReview() {
@@ -2307,12 +2374,9 @@
 
         /* 全库冲突写进复核卡自己的表。此前它写的是报告卡那张表，于是"库内冲突"
          * 会出现在「导入报告」下面，让人以为是这次导入的结果。 */
-        var conflictBody = $("metadata-review-conflicts-body");
-        clear(conflictBody);
-        var conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
-        conflicts.forEach(function (item) {
-          conflictBody.appendChild(renderConflictRow(item));
-        });
+        state.metadata.reviewConflictsPage = 1;
+        state.metadata.reviewConflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        renderReviewConflicts(state.metadata.reviewConflicts);
         $("metadata-review-conflicts-empty").hidden = conflicts.length > 0;
       })
       .catch(function (error) {
@@ -2567,6 +2631,39 @@
     });
     $("btn-metadata-prefill").addEventListener("click", prefillApplyEntries);
     $("btn-metadata-report-clear").addEventListener("click", clearMetadataReport);
+    $("metadata-sources-prev").addEventListener("click", function () {
+      state.metadata.sourcesPage -= 1;
+      renderMetadataSources();
+    });
+    $("metadata-sources-next").addEventListener("click", function () {
+      state.metadata.sourcesPage += 1;
+      renderMetadataSources();
+    });
+    $("metadata-sources-page-size").addEventListener("change", function () {
+      state.metadata.sourcesPage = 1;
+      renderMetadataSources();
+    });
+    $("metadata-conflicts-prev").addEventListener("click", function () {
+      state.metadata.conflictsPage -= 1;
+      renderImportConflicts();
+    });
+    $("metadata-conflicts-next").addEventListener("click", function () {
+      state.metadata.conflictsPage += 1;
+      renderImportConflicts();
+    });
+    $("metadata-conflicts-page-size").addEventListener("change", function () {
+      state.metadata.conflictsPage = 1;
+      renderImportConflicts();
+      renderReviewConflicts(state.metadata.reviewConflicts);
+    });
+    $("metadata-review-conflicts-prev").addEventListener("click", function () {
+      state.metadata.reviewConflictsPage -= 1;
+      renderReviewConflicts(state.metadata.reviewConflicts);
+    });
+    $("metadata-review-conflicts-next").addEventListener("click", function () {
+      state.metadata.reviewConflictsPage += 1;
+      renderReviewConflicts(state.metadata.reviewConflicts);
+    });
     $("btn-metadata-apply-run").addEventListener("click", runMetadataApply);
 
     $("btn-refresh-health").addEventListener("click", function () {

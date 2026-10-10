@@ -196,12 +196,24 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
 1. 导入：来源类型（`import_file` 默认 / `ieee_api` / `crossref` / `arxiv_api` / `manual`）、
    选文件或粘贴 JSON、可选条数上限；**试运行（`dry_run`）是默认动作**，写库要显式二次确认；
    报告区展示 total / matched / created_shell / ambiguous / unmatched / unchanged、格式、是否写库，
-   以及来源明细（`source_ref` / 匹配状态 / 匹配方式 / 论文）与**本次导入**的冲突表（保留值 vs 被拒值）。
-   报告卡是可折叠的 `<details>`，带「清空报告」按钮（连 `state` 一起清，否则"从报告预填"会拿到旧数据）；
-   表体限高（`.table-scroll`）、每张表最多铺 50 行并如实说明截断了多少（一次导入可能 5000+ 条来源）。
-   注意：响应里**没有** `source_type` 字段，所以「来源类型」只在摘要行出现一次，不再做一列。
-   库内字段冲突（`recorded_conflicts`，全库、上限 50）由下面的**复核清单**卡片自己的表格展示 ——
-   2026-10-10 之前它写的是报告卡那张表，导致"库内冲突"看起来像本次导入的结果。
+   以及来源明细（`source_ref` / 匹配状态 / 匹配方式 / 论文，**恰好 4 列**）。
+   2026-10-10 起**解耦成两块独立卡片**（此前挤在同一张卡里）：
+
+   * **导入报告**：试运行总数 + 来源明细分页。每页条数可配（默认 **5**），上一页/下一页，
+     **未匹配 → 歧义 → 其余**排序（需要人动手的排前面，同组内保持 paperbox 顺序）。
+   * **字段冲突（本次导入）**：自己的卡片、自己的分页（默认每页 **3** 条）。"保留值"是当前生效
+     的声明，"被拒值"是本次导入落败的那条。
+   * 库内字段冲突（`recorded_conflicts`，全库、paperbox 侧上限 50）仍归**复核清单**卡片，
+     同样分页 —— 此前它写的是报告卡那张表，看起来像本次导入的结果。
+
+   「清空（报告 + 字段冲突）」一次清掉两块并清 `state.metadata.report`（否则「从报告预填」
+   会拿已清空的旧报告去预填 `source_ref`）。分页/排序/行的单元格规格都在纯逻辑模块
+   `webui/static/metadata-logic.js`（`paginate` / `sortForReview` / `sourcesRow` / `conflictRow`），
+   行规格恒为 4 格 —— 真机上出过"表头 4 列、内容 5 列、中间多一个 —"。
+   注意：响应里**没有** `source_type` 字段，所以「来源类型」只在摘要行出现一次，不做列。
+
+   静态资源与首页带 `Cache-Control: no-cache, must-revalidate`：真机上出现过浏览器继续用旧
+   `app.js`（新 HTML 4 列表头配旧 JS 5 列内容，且新按钮没有监听器）。
 2. 复核：`GET /api/ui/metadata/review` 的清单（可只看 `ambiguous`），逐行填 `paper_id` → 「挂载」；
    成功后显示合并了哪些字段并刷新。
 3. 批量应用：`POST /api/ui/metadata/apply`，entries 可由上次报告的 `source_ref` 一键预填；
