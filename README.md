@@ -15,7 +15,7 @@
 ## 1. 前置条件
 
 paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
-由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.4.1**
+由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.5.0**
 （基线契约与逐条依据见 [`docs/architecture/01-paperbox-contract.md`](docs/architecture/01-paperbox-contract.md)）。
 本 WebUI 依赖的关键契约：
 
@@ -23,7 +23,10 @@ paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / Op
 - `/api/consistency` 与 `/api/metadata/*`、`GET /api/jobs` 的 `offset`/`stage`、`POST /api/jobs/{id}/retry`（2026-09-22/23 起）；
 - 检索响应的 `candidates` / `backend`、请求体 `rerank` 开关（0.2.0 起）；
 - 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 §2；
-- `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）：
+- `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）；
+- `POST /api/papers/reindex`（整库重建，先 `dry_run=true` 报告、再 `dry_run=false` 排队）、
+  `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决）、
+  以及 `GET /health` 的第五项 `docling`（0.5.0 起）：
 
 ```powershell
 cd <paperbox 后端目录>
@@ -106,6 +109,14 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 支持状态过滤与标题搜索、20 条一页的分页；每行可「详情 / 下载原文 / 重建索引 / 删除」
 （删除需二次确认，是软删除）。
 
+表格下面有一张 **「重建全库索引」** 卡片（对齐 paperbox 0.5.0 的 `POST /api/papers/reindex`）：
+点一下先**预览** —— 「N 篇待重建」徽标、每条检测理由（换 embedding 模型 / 换解析器 / 未决降级 /
+缺 chunk）、以及当前 embedding 模型与解析戳的普查，确认按钮上直接把篇数写出来
+（「确认：排队重建这 30 篇」），确认后弹出一次 `confirm` 才排队，排完跳到「任务」页。
+界面刻意只放**整库**重建（请求体只有 `include_all`）—— 只重建某几篇是 paperbox 的
+`scripts/reindex.py` 的事。讲人话的部分在 `webui/static/reindex-logic.js`：原因码翻译、
+影响面文案、"什么都不用重建"也是一个明确答案（不是转圈）。
+
 **③ 导入** — 三个入口：URL 输入框、**多选本地 PDF 组成上传队列**（也可直接把文件 / 整个文件夹拖进投放区），
 以及两张独立的卡片：
 
@@ -154,9 +165,17 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 1. **导入**：选来源类型（`import_file` 默认 / `ieee_api` / `crossref` / `arxiv_api` / `manual`）、
    选 JSON 文件或直接粘贴 JSON、可选条数上限；「试运行（不写库）」是默认路径，
    「导入并应用」会二次确认。报告区显示 total / matched / created_shell / ambiguous / unmatched / unchanged、
-   识别出的格式、是否写库，以及来源明细表（`source_ref` / 匹配状态 / 匹配方式 / 论文）与字段冲突表（保留值 vs 被拒值）。
+   识别出的格式、是否写库；**导入报告与字段冲突是两张独立卡片**（此前挤在一块，长到把下面的
+复核清单与批量应用顶出屏幕），各自**分页**展示、每页条数可配（来源默认 5、字段冲突默认 3），
+排序把 `unmatched` / `ambiguous` 顶到前面；「清空」一次清掉报告与字段冲突两块
+（只清界面状态，不碰数据库）。
 2. **复核清单**：`GET /api/ui/metadata/review` 列出待人工决定的来源记录（可只看 `ambiguous`），
    每行填 `paper_id` 后点「挂载」即 `POST .../attach`，成功后显示合并了哪些字段并刷新清单。
+   **库内字段冲突**那张表每行有「操作」列，两个裁决动词分别对应 paperbox 的两条路：
+   「采纳被拒值」（`POST /api/ui/papers/{id}/metadata/rollback`）与「保留现值」
+   （`POST /api/ui/papers/{id}/metadata/conflicts/dismiss`）—— 值都不动、声明都不删，
+   只决定谁生效 / 这条分歧是否还开着，裁决过的那条不再出现在清单里（所以清单是能清空的）；
+   试运行产生的条目没有 `provenance_id`，那一格显示「试运行未落库」而不是给个点了没用的按钮。
 3. **批量应用**：把「哪份来源属于哪篇论文」的判定成批发给 `POST /api/metadata/apply`；
    可从上次报告的 `source_ref` 一键预填 entries，`overwrite` 模式会二次确认。
 
@@ -168,12 +187,13 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/ui/health` | paperbox 四个依赖状态 + 论文/任务计数 |
+| GET | `/api/ui/health` | paperbox 五个依赖状态（含 `docling`，可为 `disabled`）+ 论文/任务计数 |
 | GET | `/api/ui/config` | 上传队列调参（并发 / 重试 / 上限），前端启动时读取 |
 | GET | `/api/ui/papers` | 论文列表：`limit` `offset` `status` `q` |
 | GET | `/api/ui/papers/{id}` | 论文元数据 |
 | GET | `/api/ui/papers/{id}/chunks` | 论文 chunks：`limit` `offset` |
 | GET | `/api/ui/papers/{id}/file` | 原文 PDF（流式转发） |
+| POST | `/api/ui/papers/reindex` | **整库重建索引**：请求体原样转发给 paperbox（默认 `dry_run=true` 只报告），`job_ids` 逐个返回 |
 | POST | `/api/ui/papers/{id}/reindex` | 重建该论文索引，返回 `job_id` |
 | DELETE | `/api/ui/papers/{id}` | 软删除 |
 | GET | `/api/ui/jobs` | 任务列表：`limit`（1..200）`offset` `stage` `paper_id`，响应回显窗口与 `total` |
@@ -184,6 +204,8 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 | POST | `/api/ui/metadata/import` | 元数据导入：multipart `file` 或 JSON 体，`dry_run`（默认 true）`apply` `source_type` `limit` |
 | GET | `/api/ui/metadata/review` | 待人工决定的来源记录：`status` `limit` |
 | POST | `/api/ui/metadata/sources/{source_id}/attach` | 把某份来源挂到论文：`{"paper_id": "..."}` |
+| POST | `/api/ui/papers/{id}/metadata/conflicts/dismiss` | 裁决「保留现值」：`{"field":"...","provenance_id":"..."}` |
+| POST | `/api/ui/papers/{id}/metadata/rollback` | 裁决「采纳被拒值」：同上两个字段 |
 | POST | `/api/ui/metadata/apply` | 批量应用判定：`{"entries": [...], "mode": "fill\|overwrite"}` |
 | POST | `/api/ui/ingest` | URL 导入：`{"source_type":"url","source":"..."}`（也接受 `{"url":"..."}`） |
 | POST | `/api/ui/ingest/file` | 本地上传（旧端点）：multipart 字段 `file` |
@@ -208,18 +230,21 @@ uv run pytest                      # 后端 + 静态守卫 + 调起 node 测试
 node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍）
 ```
 
-`uv run pytest` 目前 89 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
+`uv run pytest` 目前 **101** 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
 健康聚合与降级、参数透传（分页/状态/标题搜索/chunks/任务）、错误透传与 502、检索请求体逐字转发、
 导入 URL 的两种请求体与非法输入、multipart 上传、`/ingest/files` 多文件代理与逐文件结果、
 `/ingest/dir` 与 `/ingest/compressed` 的代理与默认值一致性、`Retry-After` 透传（有/无）、
 鉴权三态（401 / 403 不匹配 / 403 `insufficient role`）与 0.4.x 失败文案（413 两处、415、403-root、
 404 两种、422、429、502）、`/api/ui/config`、`/api/ui/jobs/queue` 的路由顺序、
 任务分页参数与 `total` 透传、失败作业重试的 409 原文透传、
-一致性报告（含 `errors` 时仍 200）、元数据 import/review/attach/apply 的四种请求体，
+一致性报告（含 `errors` 时仍 200）、元数据 import/review/attach/apply 的四种请求体、
+整库重建的转发（`/api/ui/papers/reindex`，含"请求体原样透传、不替 paperbox 决定 `dry_run`"）与
+两条冲突裁决路由的转发，
 原文流式下载、首页 HTML，以及静态资源守卫（多选上传队列的 DOM 结构、`app.js` 里的队列实现与
-新端点、检索过滤字段与六个 Tab 的页面骨架、四个 `*-logic.js` 的加载顺序与导出）。
+新端点、检索过滤字段与六个 Tab 的页面骨架、六个 `*-logic.js` 的加载顺序与导出，
+「重建全库索引」的 DOM 与只发 `include_all`、冲突行渲染恒 5 格）。
 
-`tests/js/` 下是 50 个 `node:test` 用例，纯逻辑真跑：
+`tests/js/` 下是 **77** 个 `node:test` 用例，纯逻辑真跑：
 `queue_logic.test.mjs`（14）覆盖 `parseRetryAfter`、`retryDelayMs`（Retry-After 优先 / 指数增长 /
 抖动范围 / 上限）、`summarizeProgress`、`uploadSlots`、`shouldSuggestServerSide`；
 `search_logic.test.mjs` 覆盖过滤体构造（空值不发、`scheme:value` 校验、年份解析、多选标签）、
@@ -227,14 +252,22 @@ node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍
 精排三态）；
 `jobs_logic.test.mjs` 覆盖分页换算（`ceil(total/limit)`、`offset` 越界夹到最后一页、上一页/下一页可用性）
 与耗时文案（无 `finished_at` 即「进行中」）；
-`consistency_logic.test.mjs` 覆盖九个问题码的中文映射、普查摊平与「换模型只换一半」告警。
+`consistency_logic.test.mjs` 覆盖九个问题码的中文映射、普查摊平与「换模型只换一半」告警；
+`metadata_logic.test.mjs`（18）覆盖分页换算、排序（`unmatched` → `ambiguous` → 其余）、
+导入报告与字段冲突两份行渲染的格数（冲突行恒 5 格：含「操作」列）与摘要去重；
+`reindex_logic.test.mjs`（9）覆盖原因码翻译、影响面文案（确认按钮上直接写篇数）、
+普查文案，以及两条容易做错的：**认不出的原因码要原样显示**，**"无需重建"要是个正常答案**
+而不是转圈。
 
 真机验收（并发在途数、429 退避、两阶段进度、`QUEUED`、停止语义、收尾基线）的实测输出见
 [`docs/examine/acceptance-upload.md`](docs/examine/acceptance-upload.md)；2026-09-23 四项新能力
 （搜索选项 / 一致性 / 元数据导入 / 任务分页）的实测输出见
 [`docs/examine/acceptance-2026-09-23.md`](docs/examine/acceptance-2026-09-23.md)；
 **对齐 paperbox 0.4.1 的验收（2026-10-08，含精排开关、embedding 普查、五条失败文案、
-真机 429）见 [`docs/examine/acceptance-2026-10-08.md`](docs/examine/acceptance-2026-10-08.md)**。
+真机 429）见 [`docs/examine/acceptance-2026-10-08.md`](docs/examine/acceptance-2026-10-08.md)**；
+**对齐 paperbox 0.5.0 的验收（2026-10-10，含整库重建按钮、冲突操作列、导入报告解耦分页、
+docling 一格、静态资源 no-cache）见
+[`docs/examine/acceptance-2026-10-10.md`](docs/examine/acceptance-2026-10-10.md)**。
 
 ## 6. 目录
 
