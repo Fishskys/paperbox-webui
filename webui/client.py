@@ -247,6 +247,29 @@ class PaperboxClient:
         """``POST /api/metadata/apply`` -- replay a report's decisions."""
         return await self._request("POST", "/api/metadata/apply", json=payload)
 
+    async def dismiss_conflict(
+        self, paper_id: str, field: str, provenance_id: str
+    ) -> PaperboxResponse:
+        """``POST /api/papers/{id}/metadata/conflicts/dismiss`` -- 人工裁决：保留现值。
+
+        与 :meth:`rollback_metadata` 配对，两者都不删声明，只关掉"待裁决"状态。
+        """
+        return await self._request(
+            "POST",
+            f"/api/papers/{paper_id}/metadata/conflicts/dismiss",
+            json={"field": field, "provenance_id": provenance_id},
+        )
+
+    async def rollback_metadata(
+        self, paper_id: str, field: str, provenance_id: str
+    ) -> PaperboxResponse:
+        """``POST /api/papers/{id}/metadata/rollback`` -- 人工裁决：采纳被拒值。"""
+        return await self._request(
+            "POST",
+            f"/api/papers/{paper_id}/metadata/rollback",
+            json={"field": field, "provenance_id": provenance_id},
+        )
+
     async def ingest_url(self, url: str) -> PaperboxResponse:
         return await self._request(
             "POST",

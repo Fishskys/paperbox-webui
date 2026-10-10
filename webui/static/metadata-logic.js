@@ -150,14 +150,23 @@
     ];
   }
 
-  /*: 字段冲突一行 = 固定 4 格。 */
+  /*: 字段冲突一行 = 固定 5 格（末格是操作）。
+
+  末格带上裁决需要的三样东西：paper_id / field / provenance_id。``provenance_id`` 只有
+  已经落库的分歧才有 —— 导入报告里的冲突来自试运行（还没写库），所以那边渲染成无按钮的说明。 */
   function conflictRow(item) {
     var data = item || {};
     return [
       { kind: "paper", text: data.paper_id || "" },
       { kind: "text", text: data.field || "—" },
       { kind: "kept", text: valueText(data.kept) },
-      { kind: "rejected", text: valueText(data.rejected) }
+      { kind: "rejected", text: valueText(data.rejected) },
+      {
+        kind: "actions",
+        paperId: data.paper_id || "",
+        field: data.field || "",
+        provenanceId: data.provenance_id || ""
+      }
     ];
   }
 

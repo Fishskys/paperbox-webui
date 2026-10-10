@@ -128,24 +128,40 @@ test("an unmatched source row shows the note where the paper would be", () => {
   assert.equal(row[3].text, "no candidate");
 });
 
-test("a conflict row is exactly four cells and flattens list values", () => {
+test("a conflict row is exactly five cells and flattens list values", () => {
+  /* 第 5 格是操作列（采纳被拒值 / 保留现值），带裁决需要的 paper_id/field/provenance_id。 */
   const row = ML.conflictRow({
     paper_id: "p-1",
     field: "authors",
     kept: ["Lei Wang", "Yuanzi Li"],
-    rejected: "single"
+    rejected: "single",
+    provenance_id: "claim-9"
   });
 
-  assert.equal(row.length, 4);
+  assert.equal(row.length, 5);
   assert.equal(row[1].text, "authors");
   assert.equal(row[2].text, "Lei Wang, Yuanzi Li");
   assert.equal(row[3].text, "single");
+  assert.equal(row[4].kind, "actions");
+  assert.deepEqual(
+    { p: row[4].paperId, f: row[4].field, id: row[4].provenanceId },
+    { p: "p-1", f: "authors", id: "claim-9" }
+  );
+});
+
+test("a conflict from a dry-run report has no claim to act on", () => {
+  /* 导入报告里的冲突来自试运行，还没落库：没有 provenance_id，界面据此不给按钮。 */
+  const row = ML.conflictRow({ paper_id: "p-1", field: "year", kept: 2024, rejected: 2014 });
+
+  assert.equal(row.length, 5);
+  assert.equal(row[4].kind, "actions");
+  assert.equal(row[4].provenanceId, "");
 });
 
 test("missing values read as — rather than empty cells", () => {
   const row = ML.conflictRow({});
 
-  assert.equal(row.length, 4);
+  assert.equal(row.length, 5);
   assert.equal(row[1].text, "—");
   assert.equal(row[2].text, "—");
   assert.equal(ML.valueText(null), "—");

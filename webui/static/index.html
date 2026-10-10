@@ -506,7 +506,7 @@
           <div class="table-wrap table-scroll">
             <table class="table" id="metadata-conflicts-table">
               <thead>
-                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th></tr>
+                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th><th>操作</th></tr>
               </thead>
               <tbody id="metadata-conflicts-body"></tbody>
             </table>
@@ -514,6 +514,7 @@
           </div>
           <p class="muted">
             "保留值"是当前生效的声明，"被拒值"是本次导入落败的那一条（paperbox 只登记、不覆盖）。
+            <strong>试运行不落库</strong>，所以这里的行没有操作按钮；要裁决已经存在的分歧，请用下面的复核清单。
           </p>
         </div>
 
@@ -537,11 +538,13 @@
           <div class="table-wrap table-scroll">
             <p class="muted">
               库内字段冲突（来源：全库未生效的字段声明，paperbox 侧最多返回 50 条）。刻意排除
-              "弱来源被结构化来源覆盖"这类预期行为。
+              "弱来源被结构化来源覆盖"这类预期行为，以及人工已经裁决过的字段。
+              「采纳被拒值」把落败那条恢复为当前值；「保留现值」记一笔人工裁决、值不动。
+              两者都不删任何声明，所以之后仍可回滚。
             </p>
             <table class="table" id="metadata-review-conflicts-table">
               <thead>
-                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th></tr>
+                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th><th>操作</th></tr>
               </thead>
               <tbody id="metadata-review-conflicts-body"></tbody>
             </table>
@@ -549,6 +552,10 @@
           </div>
           <div class="form-actions">
             <span class="muted" id="metadata-review-conflicts-pager-summary">共 0 条</span>
+            <label class="field field-inline">
+              <span>每页</span>
+              <input type="number" id="metadata-review-conflicts-page-size" value="3" min="1" max="200" />
+            </label>
             <button type="button" class="btn btn-ghost btn-sm" id="metadata-review-conflicts-prev">上一页</button>
             <button type="button" class="btn btn-ghost btn-sm" id="metadata-review-conflicts-next">下一页</button>
           </div>

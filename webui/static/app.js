@@ -2214,12 +2214,58 @@
         cell.textContent = spec.text;
       } else if (spec.kind === "note") {
         cell.appendChild(el("span", "muted", spec.text));
+      } else if (spec.kind === "actions") {
+        renderConflictActions(cell, spec);
       } else {
         cell.textContent = spec.text;
       }
       tr.appendChild(cell);
     });
     return tr;
+  }
+
+  /* 字段冲突的两个人工裁决。两者都调 paperbox 的既有端点，且都不删声明：
+   *   adopt  → rollback：被拒值恢复为当前值
+   *   keep   → dismiss：记一笔"看过了，保留现值"，这条分歧不再列出
+   * 没有 provenance_id 的行（导入报告里的试运行冲突还没落库）不给按钮，只说明原因。 */
+  function renderConflictActions(cell, spec) {
+    if (!spec.provenanceId) {
+      cell.appendChild(el("span", "muted", "试运行未落库"));
+      return;
+    }
+    var adopt = el("button", "btn btn-ghost btn-sm", "采纳被拒值");
+    adopt.type = "button";
+    adopt.addEventListener("click", function () {
+      settleConflict(spec, "adopt", adopt);
+    });
+    var keep = el("button", "btn btn-ghost btn-sm", "保留现值");
+    keep.type = "button";
+    keep.addEventListener("click", function () {
+      settleConflict(spec, "keep", keep);
+    });
+    cell.appendChild(adopt);
+    cell.appendChild(keep);
+  }
+
+  function settleConflict(spec, verdict, button) {
+    var path =
+      verdict === "adopt"
+        ? "/api/ui/papers/" + encodeURIComponent(spec.paperId) + "/metadata/rollback"
+        : "/api/ui/papers/" + encodeURIComponent(spec.paperId) + "/metadata/conflicts/dismiss";
+    button.disabled = true;
+    api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field: spec.field, provenance_id: spec.provenanceId })
+    })
+      .then(function () {
+        toast(verdict === "adopt" ? "已采纳被拒值" : "已保留现值 · 这条分歧不再列出", "info");
+        return loadMetadataReview();
+      })
+      .catch(function (error) {
+        button.disabled = false;
+        toast("裁决失败：" + error.message, "warn");
+      });
   }
 
   function pageSizeOf(inputId, fallback) {
@@ -2286,7 +2332,8 @@
   /* 复核清单里的库内冲突：同一套分页渲染，只是数据源不同（全库、不是本次导入）。 */
   function renderReviewConflicts(items) {
     var all = Array.isArray(items) ? items : [];
-    var size = pageSizeOf("metadata-conflicts-page-size", ML.CONFLICTS_PAGE_SIZE);
+    /* 用它自己的"每页条数"：曾复用导入冲突卡那个输入框，改一处两处都变。 */
+    var size = pageSizeOf("metadata-review-conflicts-page-size", ML.CONFLICTS_PAGE_SIZE);
     var result = ML.paginate(all, state.metadata.reviewConflictsPage, size);
     state.metadata.reviewConflictsPage = result.page;
 
@@ -2376,8 +2423,9 @@
          * 会出现在「导入报告」下面，让人以为是这次导入的结果。 */
         state.metadata.reviewConflictsPage = 1;
         state.metadata.reviewConflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        /* 空态与分页都在 renderReviewConflicts 里管，这里别再碰一次
+         * （曾经留了一句引用已删变量的旧代码，把整个 then 块炸成"加载失败"）。 */
         renderReviewConflicts(state.metadata.reviewConflicts);
-        $("metadata-review-conflicts-empty").hidden = conflicts.length > 0;
       })
       .catch(function (error) {
         clear(summary);
@@ -2654,6 +2702,9 @@
     $("metadata-conflicts-page-size").addEventListener("change", function () {
       state.metadata.conflictsPage = 1;
       renderImportConflicts();
+    });
+    $("metadata-review-conflicts-page-size").addEventListener("change", function () {
+      state.metadata.reviewConflictsPage = 1;
       renderReviewConflicts(state.metadata.reviewConflicts);
     });
     $("metadata-review-conflicts-prev").addEventListener("click", function () {

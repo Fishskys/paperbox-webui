@@ -11,6 +11,11 @@ frontend's "元数据" tab drives them in that order:
 3. ``POST /api/ui/metadata/sources/{id}/attach`` -- the human answer: "this
    record belongs to that paper".
 4. ``POST /api/ui/metadata/apply``   -- replay a report's decisions in bulk.
+5. ``POST /api/ui/papers/{id}/metadata/rollback``  -- settle one field conflict by
+   adopting the rejected value (the loser becomes current again).
+6. ``POST /api/ui/papers/{id}/metadata/conflicts/dismiss`` -- settle it the other
+   way: a human looked at it and kept the current value. Both leave every claim in
+   the ledger, so either verdict can still be undone (2026-10-10).
 
 Two rules this router keeps:
 
@@ -115,6 +120,41 @@ async def attach_source(
     try:
         response = await client.attach_source(
             source_id, str(body.get("paper_id") or "")
+        )
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
+@router.post("/papers/{paper_id}/metadata/conflicts/dismiss")
+async def dismiss_conflict(
+    paper_id: str,
+    body: dict[str, Any] = Body(...),
+    client: PaperboxClient = Depends(get_client),
+) -> JSONResponse:
+    """人工裁决：保留现值 → 这条分歧不再进复核清单（paperbox 记 ``decided_by``）。
+
+    与 ``rollback`` 配对。两者都**不删任何声明**，值也不动，所以此后仍可回滚。
+    """
+    try:
+        response = await client.dismiss_conflict(
+            paper_id, str(body.get("field") or ""), str(body.get("provenance_id") or "")
+        )
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
+@router.post("/papers/{paper_id}/metadata/rollback")
+async def rollback_metadata(
+    paper_id: str,
+    body: dict[str, Any] = Body(...),
+    client: PaperboxClient = Depends(get_client),
+) -> JSONResponse:
+    """人工裁决：采纳被拒值 → 把那条历史声明恢复为当前值。"""
+    try:
+        response = await client.rollback_metadata(
+            paper_id, str(body.get("field") or ""), str(body.get("provenance_id") or "")
         )
     except PaperboxUnreachable as exc:
         return unreachable(exc)

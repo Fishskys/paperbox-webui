@@ -1868,3 +1868,55 @@ def test_each_card_owns_its_own_conflict_table() -> None:
     assert "metadata-conflicts-body" not in review_fn
     review_render = body.split("function renderReviewConflicts")[1].split("\n  function ")[0]
     assert "metadata-review-conflicts-body" in review_render
+
+
+def test_a_conflict_row_can_be_settled_from_the_review_card() -> None:
+    """真机问题：10 条库内字段冲突只有眼睛没有手。现在每行两个裁决按钮。
+
+    两个按钮都打 paperbox 的既有端点，且**都不删声明**：adopt→rollback，keep→dismiss。
+    试运行留下的冲突（还没落库）没有 provenance_id，界面要说明原因而不是给死按钮。
+    """
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    review_table = html.split('id="metadata-review-conflicts-table"')[1].split("</table>")[0]
+    assert "<th>操作</th>" in review_table, "冲突表要有操作列"
+    report_table = html.split('id="metadata-conflicts-table"')[1].split("</table>")[0]
+    assert "<th>操作</th>" in report_table, "导入报告那张表的列数也要对齐"
+
+    assert "/api/ui/papers/" in body
+    assert '"/metadata/rollback"' in body or "/metadata/rollback" in body
+    assert "/metadata/conflicts/dismiss" in body
+    assert "采纳被拒值" in body and "保留现值" in body
+    assert "试运行未落库" in body, "没落库的冲突要说清为什么没有按钮"
+    # 裁决完成后刷新复核清单（否则点完按钮行还挂在那儿）
+    settle = body.split("function settleConflict")[1].split("\n  function ")[0]
+    assert "loadMetadataReview()" in settle
+
+
+def test_the_settle_routes_exist_on_the_bff() -> None:
+    """BFF 必须把两个裁决动作转给 paperbox（前端打的就是这两个路径）。"""
+    from webui.routers import metadata as metadata_routes
+
+    paths = {route.path for route in metadata_routes.router.routes}
+    assert "/papers/{paper_id}/metadata/rollback" in paths
+    assert "/papers/{paper_id}/metadata/conflicts/dismiss" in paths
+
+
+def test_no_bare_conflicts_identifier_survives_in_app_js() -> None:
+    """真机踩过：改 loader 时留下半句引用已删变量的代码，整个 then 块炸成"加载失败"。
+
+    前端这类残留只在浏览器里才现形，所以在测试里做一次廉价但明确的文本检查：
+    ``conflicts`` 必须以 ``state.metadata.reviewConflicts`` 或 ``payload.conflicts`` 的形式出现，
+    裸用它就是漏改。
+    """
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+    # 先把字符串字面量剥掉：元素 id（"metadata-conflicts-body"）与 URL（"/metadata/conflicts/dismiss"）
+    # 里的 conflicts 是正常的，不该算。
+    code = re.sub(r'"[^"\n]*"', '""', body)
+    code = re.sub(r"'[^'\n]*'", "''", code)
+
+    bare = re.findall(r"(?<![\w.])conflicts\b", code)
+    assert bare == [], f"app.js 里还有 {len(bare)} 处裸用 conflicts（应为 state.metadata.reviewConflicts）"
