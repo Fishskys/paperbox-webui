@@ -470,6 +470,26 @@ code {
   background: var(--bg-elevated);
 }
 
+/* 元数据导入报告：可折叠 + 表体限高。报告一次可能带 5000+ 行来源，
+   不限高就会把下面的复核清单、批量应用顶到屏幕外。 */
+.report-card > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.report-card > summary > h2 {
+  margin: 0;
+}
+
+.table-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .filter-extra > summary {
   cursor: pointer;
   font-size: 12px;

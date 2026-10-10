@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -1767,3 +1768,55 @@ def test_a_disabled_dependency_is_passed_through_untouched() -> None:
     body = client.get("/api/ui/health").json()
     assert body["paperbox"]["docling"] == "disabled"
     assert body["paperbox"] == payload["services"]
+
+
+def test_the_metadata_report_can_be_collapsed_and_cleared() -> None:
+    """导入报告以前是一张铺到底的裸卡片：不能折、不能清，把下面两个卡片顶出屏幕。"""
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    assert 'id="metadata-report-card"' in html
+    # 折叠靠原生 <details>，别再手写一套显隐状态机
+    assert re.search(r'<details[^>]*id="metadata-report-card"', html)
+    assert 'id="btn-metadata-report-clear"' in html
+    assert "clearMetadataReport" in body
+    # 清空要连 state 一起清，否则"从报告预填"会拿到已清空的旧数据
+    assert "state.metadata.report = null;" in body
+    # 表体限高，长报告不再把后面的卡片推下去
+    assert "table-scroll" in html
+    assert ".table-scroll" in client.get("/static/style.css").text
+
+
+def test_the_report_tables_only_show_columns_that_carry_values() -> None:
+    """「来源类型」曾经永远为空：paperbox 的导入响应里没有 source_type 字段。
+
+    它现在只出现在摘要行（来自表单），表格里不再留那一列。
+    """
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    sources_table = html.split('id="metadata-sources-table"')[1].split("</table>")[0]
+    assert "source_ref" in sources_table
+    assert "匹配状态" in sources_table and "匹配方式" in sources_table and "论文" in sources_table
+    assert "来源类型" not in sources_table, "这一列是空的，不该留在表格里"
+    assert "来源类型（source_type）" in html, "表单里那项仍在"
+
+
+def test_each_card_owns_its_own_conflict_table() -> None:
+    """曾经 report 卡和 review 卡写同一张表，于是"库内冲突"出现在「导入报告」下面。"""
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+    body = client.get("/static/app.js").text
+
+    assert 'id="metadata-conflicts-body"' in html
+    assert 'id="metadata-review-conflicts-body"' in html
+    # 导入报告的渲染只碰自己那张表
+    report_fn = body.split("function renderMetadataReport")[1].split("function paintMoreNote")[0]
+    assert 'metadata-conflicts-body' in report_fn
+    assert "metadata-review-conflicts-body" not in report_fn
+    # 复核清单的 loader 只碰自己那张表（切到下一个顶层函数为止，
+    # 注意别切在里面的匿名 function 上）
+    review_fn = body.split("function loadMetadataReview")[1].split("\n  function ")[0]
+    assert "metadata-review-conflicts-body" in review_fn
+    assert "metadata-conflicts-body" not in review_fn

@@ -196,7 +196,12 @@ score（0~1）与 relevance 徽标（high/medium/low 用不同颜色）、eviden
 1. 导入：来源类型（`import_file` 默认 / `ieee_api` / `crossref` / `arxiv_api` / `manual`）、
    选文件或粘贴 JSON、可选条数上限；**试运行（`dry_run`）是默认动作**，写库要显式二次确认；
    报告区展示 total / matched / created_shell / ambiguous / unmatched / unchanged、格式、是否写库，
-   以及来源明细（`source_ref` / 匹配状态 / 匹配方式 / 论文）与冲突表（保留值 vs 被拒值）。
+   以及来源明细（`source_ref` / 匹配状态 / 匹配方式 / 论文）与**本次导入**的冲突表（保留值 vs 被拒值）。
+   报告卡是可折叠的 `<details>`，带「清空报告」按钮（连 `state` 一起清，否则"从报告预填"会拿到旧数据）；
+   表体限高（`.table-scroll`）、每张表最多铺 50 行并如实说明截断了多少（一次导入可能 5000+ 条来源）。
+   注意：响应里**没有** `source_type` 字段，所以「来源类型」只在摘要行出现一次，不再做一列。
+   库内字段冲突（`recorded_conflicts`，全库、上限 50）由下面的**复核清单**卡片自己的表格展示 ——
+   2026-10-10 之前它写的是报告卡那张表，导致"库内冲突"看起来像本次导入的结果。
 2. 复核：`GET /api/ui/metadata/review` 的清单（可只看 `ambiguous`），逐行填 `paper_id` → 「挂载」；
    成功后显示合并了哪些字段并刷新。
 3. 批量应用：`POST /api/ui/metadata/apply`，entries 可由上次报告的 `source_ref` 一键预填；

@@ -465,28 +465,36 @@
           </p>
         </form>
 
-        <div class="card" id="metadata-report-card">
-          <h2>导入报告 <span class="muted" id="metadata-report-summary">尚未导入</span></h2>
+        <details class="card report-card" id="metadata-report-card" open>
+          <summary>
+            <h2>导入报告 <span class="muted" id="metadata-report-summary">尚未导入</span></h2>
+            <div class="form-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-metadata-report-clear">清空报告</button>
+            </div>
+          </summary>
           <div class="totals-grid" id="metadata-report-totals"></div>
-          <div class="table-wrap">
+          <div class="table-wrap table-scroll">
             <table class="table" id="metadata-sources-table">
               <thead>
-                <tr><th>source_ref</th><th>来源类型</th><th>匹配状态</th><th>匹配方式</th><th>论文</th></tr>
+                <tr><th>source_ref</th><th>匹配状态</th><th>匹配方式</th><th>论文</th></tr>
               </thead>
               <tbody id="metadata-sources-body"></tbody>
             </table>
             <p class="empty" id="metadata-sources-empty" hidden>报告里没有来源明细。</p>
+            <p class="muted" id="metadata-sources-more" hidden></p>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap table-scroll">
+            <p class="muted">本次导入会产生的字段冲突（来源：本次导入的合并决策）。</p>
             <table class="table" id="metadata-conflicts-table">
               <thead>
                 <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th></tr>
               </thead>
               <tbody id="metadata-conflicts-body"></tbody>
             </table>
-            <p class="empty" id="metadata-conflicts-empty" hidden>没有字段冲突。</p>
+            <p class="empty" id="metadata-conflicts-empty" hidden>本次导入没有字段冲突。</p>
+            <p class="muted" id="metadata-conflicts-more" hidden></p>
           </div>
-        </div>
+        </details>
 
         <div class="card">
           <h2>复核清单 <span class="muted" id="metadata-review-summary">尚未加载</span></h2>
@@ -504,6 +512,19 @@
               <tbody id="metadata-review-body"></tbody>
             </table>
             <p class="empty" id="metadata-review-empty" hidden>复核清单为空。</p>
+          </div>
+          <div class="table-wrap table-scroll">
+            <p class="muted">
+              库内字段冲突（来源：全库未生效的字段声明，最多 50 条）。刻意排除"弱来源被结构化来源
+              覆盖"这类预期行为。
+            </p>
+            <table class="table" id="metadata-review-conflicts-table">
+              <thead>
+                <tr><th>论文</th><th>字段</th><th>保留值</th><th>被拒值</th></tr>
+              </thead>
+              <tbody id="metadata-review-conflicts-body"></tbody>
+            </table>
+            <p class="empty" id="metadata-review-conflicts-empty" hidden>库内没有字段冲突。</p>
           </div>
         </div>
 
@@ -550,6 +571,7 @@
     <script src="/static/jobs-logic.js"></script>
     <script src="/static/queue-logic.js"></script>
     <script src="/static/consistency-logic.js"></script>
+    <script src="/static/metadata-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
