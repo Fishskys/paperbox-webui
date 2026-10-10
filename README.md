@@ -14,6 +14,10 @@
 
 ## 1. 前置条件
 
+**时区**：与 paperbox 同口径，全栈统一 `Asia/Shanghai`（`webui/config.py` 导入期设定，`.env` 的
+`TZ` 可覆盖）。WebUI 只打访问日志，但对时间一不一致的排查往往从这一侧开始 —— 两边偏移不同时，
+最先被怀疑的总是"谁写的时间不对"。
+
 paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
 由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.5.0**
 （基线契约与逐条依据见 [`docs/architecture/01-paperbox-contract.md`](docs/architecture/01-paperbox-contract.md)）。

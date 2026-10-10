@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import time
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: 进程时区（2026-10-10）：与 paperbox 同口径，全栈统一 Asia/Shanghai（`TZ` 可覆盖）。
+#: WebUI 自己只打访问日志，但"时间显示对不对"的排查常常从这一侧开始 ——
+#: 两边偏移不一致时，最先被怀疑的总是"谁写的时间不对"。
+os.environ.setdefault("TZ", "Asia/Shanghai")
+if hasattr(time, "tzset"):
+    time.tzset()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
