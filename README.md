@@ -26,7 +26,7 @@ paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / Op
 - `/api/papers/ingest/{file,files}`、`429 + Retry-After`、`/api/jobs/queue` 与 `QUEUED` 阶段（2026-09-19/20 起）；
 - `/api/consistency` 与 `/api/metadata/*`、`GET /api/jobs` 的 `offset`/`stage`、`POST /api/jobs/{id}/retry`（2026-09-22/23 起）；
 - 检索响应的 `candidates` / `backend`、请求体 `rerank` 开关（0.2.0 起）；
-- 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 §2；
+- 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 第 2 节；
 - `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）；
 - `POST /api/papers/reindex`（整库重建，先 `dry_run=true` 报告、再 `dry_run=false` 排队）、
   `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决）、

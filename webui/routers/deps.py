@@ -110,7 +110,7 @@ _HINTS: tuple[tuple[int, str, str], ...] = (
         502,
         "",
         "paperbox 本身没起来或崩了（WebUI 连不上后端）：看 paperbox 日志与 /health；"
-        "0.4.1 起向量维度对账不过会拒绝启动，见 paperbox docs/architecture/04-embedding.md §5b/§9",
+        "0.4.1 起向量维度对账不过会拒绝启动，见 paperbox docs/architecture/04-embedding.md 第 5b/9 节",
     ),
 )
 

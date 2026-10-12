@@ -7,7 +7,7 @@
  *   - 服务端分页的页数 / 当前页 / 上一页下一页可用性（offset 是行偏移，不是页码）；
  *   - 耗时（有 finished_at 才算得出来，否则作业还在跑）。
  *
- * 不引入任何构建工具（SPEC §4）。
+ * 不引入任何构建工具（SPEC 第 4 节）。
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {

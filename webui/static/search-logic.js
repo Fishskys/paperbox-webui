@@ -13,7 +13,7 @@
  *     把打错的项留成一条提示，而不是让整次检索失败；
  *   - 空值一律**不发**（后端对缺省字段按"不过滤"处理）。
  *
- * 不引入任何构建工具（SPEC §4）。
+ * 不引入任何构建工具（SPEC 第 4 节）。
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {

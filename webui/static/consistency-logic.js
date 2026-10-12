@@ -10,7 +10,7 @@
  *   - 顶层 `embedding_models.{chunks,documents}` 是 0.4.1 新增的普查：PG 切块行与索引文档
  *     各按产出它们的模型计数，没有记录的归 `unknown`；同一篇论文跨两个已知模型 → mismatch。
  *
- * 不引入任何构建工具（SPEC §4）。
+ * 不引入任何构建工具（SPEC 第 4 节）。
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {

@@ -4,7 +4,7 @@
  * （见 tests/js/queue_logic.test.mjs）。并发数、429 退避、两阶段进度的规则因此能被
  * node:test 真测，而不是靠对 app.js 做字符串断言。
  *
- * 不引入任何构建工具（SPEC §4）。
+ * 不引入任何构建工具（SPEC 第 4 节）。
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {

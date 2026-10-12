@@ -9,7 +9,7 @@
 
 ---
 
-## §1 基线读数（当前语料）
+## 第 1 节 基线读数（当前语料）
 
 `GET /api/ui/health`：
 
@@ -34,7 +34,7 @@ parser_backends: {"papers":{"docling":30},"documents":{"docling":2302},"paper_id
 
 ---
 
-## §2 鉴权（0.4.0 起）
+## 第 2 节 鉴权（0.4.0 起）
 
 WebUI 用**自己**的 `admin` key（前缀 `webui`，`manage_keys.py create --name paperbox-webui --prefix webui --role admin`）。真实结果：
 
@@ -49,7 +49,7 @@ WebUI 用**自己**的 `admin` key（前缀 `webui`，`manage_keys.py create --n
 
 ---
 
-## §3 检索：精排开关（默认关）+ 新回显
+## 第 3 节 检索：精排开关（默认关）+ 新回显
 
 `POST /api/ui/search`，`mode=hybrid`、`top_k=10`：
 
@@ -62,7 +62,7 @@ WebUI 用**自己**的 `admin` key（前缀 `webui`，`manage_keys.py create --n
 
 ---
 
-## §4 一致性 Tab：embedding 普查与两个新问题码
+## 第 4 节 一致性 Tab：embedding 普查与两个新问题码
 
 真浏览器（Chromium，页面 8088）切到一致性 Tab 后读 DOM：
 
@@ -80,7 +80,7 @@ WebUI 用**自己**的 `admin` key（前缀 `webui`，`manage_keys.py create --n
 
 ---
 
-## §5 导入通道与失败文案（0.4.x 的五条）
+## 第 5 节 导入通道与失败文案（0.4.x 的五条）
 
 全部经 WebUI（8088）打，各条都是纸面原始输出。目录导入一律 `dry_run`，对语料零改动。
 
@@ -145,7 +145,7 @@ hint  : paperbox 在途上传或队列水位到顶：按 Retry-After 等一会�
 
 ---
 
-## §6 其余只读面（回归）
+## 第 6 节 其余只读面（回归）
 
 ```
 GET /api/ui/config      200 {"upload_concurrency":2,"upload_max_attempts":6,"retry_base_ms":2000,
@@ -156,12 +156,12 @@ GET …/{id}/chunks       200 total=43（本页 2，首块 token_count=39）
 GET …/{id}/file         200 content-type: application/pdf
 GET /api/ui/jobs        200 total=44（首条 stage=COMPLETED）
 GET /api/ui/metadata/review  200 total=0，conflicts 非空（authors 等字段有保留/被拒记录）
-GET /api/ui/consistency 200 consistent=True problems=0（见 §1）
+GET /api/ui/consistency 200 consistent=True problems=0（见 第 1 节）
 ```
 
 ---
 
-## §7 测试与静态守卫
+## 第 7 节 测试与静态守卫
 
 | 命令 | 结果 |
 |---|---|
@@ -175,7 +175,7 @@ GET /api/ui/consistency 200 consistent=True problems=0（见 §1）
 
 ---
 
-## §8 本轮未覆盖 / 已知边界
+## 第 8 节 本轮未覆盖 / 已知边界
 
 - **逐篇「向量模型」列**没有真实数据行可看（`problems=0`）；规则由 node 测试覆盖。
 - **backlog 水位的 429** 未在真机复现（水位默认关闭），只有单测。

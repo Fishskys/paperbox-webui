@@ -8,7 +8,7 @@ paperbox 后端服务（FastAPI，端口 **8077**）另行维护，本仓库不�
 集成样例见 `docs/architecture/hermes-integration.md`，部署与排障见其 `UserManual.md`。
 
 > 本文是**活文档**：原实现规范（2026-09-11 版）已归档为 `docs/old/SPEC-20261008.md`，
-> 之后按 `docs/architecture/01-paperbox-contract.md` 的契约基线增量更新（见本文 §8）。
+> 之后按 `docs/architecture/01-paperbox-contract.md` 的契约基线增量更新（见本文 第 8 节）。
 
 ## 0. 技术栈与硬约束
 
@@ -94,7 +94,7 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
   丢掉这个头，前端就只能把 429 当普通失败。
 - `ingest_files` 直接把 Starlette 的 `UploadFile.file`（可 seek 的 `SpooledTemporaryFile`）交给 httpx
   流式转发，**不要** `await file.read()`：并发 × `INGEST_MAX_FILE_MB` 会把 BFF 的内存打满。
-- `GET /api/ui/config` 返回上传队列调参（§2 的 6 个键）；`GET /api/ui/jobs/queue` 代理 paperbox 的
+- `GET /api/ui/config` 返回上传队列调参（第 2 节 的 6 个键）；`GET /api/ui/jobs/queue` 代理 paperbox 的
   队列深度（`started/concurrency/running/queued/queued_high/queued_low/...`），用来解释"作业为什么还没开始"。
 - 超时：普通 30s，ingest 60s；文件下载用 `StreamingResponse` 转发（附
   `Content-Disposition` 与 `Content-Type`）。
