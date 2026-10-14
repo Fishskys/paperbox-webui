@@ -11,7 +11,7 @@
 | 3 | 2026-09-23 | 检索过滤选项、一致性 Tab、元数据导入/复核、任务分页与详情/重试 | `8891f58`/`20f5660`/`9fa08df`/`7c1078c`/`b410d3f` | 真机验收通过（`docs/examine/acceptance-2026-09-23.md`） |
 | 4 | 2026-09-23 | 去掉多余的 `static/.gitkeep`、忽略系统垃圾文件 | `ca6499a` | — |
 | 5 | 2026-10-08 | **升级到 paperbox 0.4.1**：docs 改四类目录（architecture/examine/progress/old）、专用 admin key（本地专用）、检索加精排开关（默认关）与候选数/后端回显、一致性接 embedding 模型普查与两个新问题码、补 `dir`/`compressed` 两个导入入口、0.4.x 失败路径可读文案 | `60a6b7d` / `e795618` / `bd967d3` / `6bd1cf6` / `68d5081` | **真机验收通过**（`docs/examine/acceptance-2026-10-08.md`） |
-| 6 | 2026-10-14 | **状态条改按需**：对齐 paperbox 当日重做的 `/health` 依赖面 —— 六格徽标（含可选 `rerank`）、四种状态各一色、悬停看失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按钮；**去掉 15s 定时探测**（第三方 embedding 探针按次计费）；新增纯逻辑模块 `health-logic.js` 与 `tests/js/health_logic.test.mjs` | `da2ed44` | 见「批次 6 的验收读数」 |
+| 6 | 2026-10-14 | **状态条改按需**：对齐 paperbox 当日重做的 `/health` 依赖面 —— 六格徽标（含可选 `rerank`）、四种状态各一色、悬停看失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按钮；**去掉 15s 定时探测**（第三方 embedding 探针按次计费）；新增纯逻辑模块 `health-logic.js` 与 `tests/js/health_logic.test.mjs` | `b18d1d1` | 见「批次 6 的验收读数」 |
 
 ## 基线读数
 
