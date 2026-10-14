@@ -29,13 +29,18 @@ paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / Op
 - 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 第 2 节；
 - `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）；
 - `POST /api/papers/reindex`（整库重建，先 `dry_run=true` 报告、再 `dry_run=false` 排队）、
-  `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决）、
-  以及 `GET /health` 的第五项 `docling`（0.5.0 起）：
+  `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决，0.5.0 起）：
 
 ```powershell
 cd <paperbox 后端目录>
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8077 --workers 1
 ```
+
+- `GET /health` 的依赖面（2026-10-14 起）：`services` **六项**（`postgres` / `opensearch` / `minio` /
+  `embedding` / `rerank` / `docling`，取值只有 `ok` / `error` / `disabled` / `unknown` 四种）、顶层
+  `degraded`（**必需**依赖是否就绪）、`dependencies.<name>` 带 `reason` / `latency_ms` / `checked_at` / `cached`。
+  paperbox 侧探测**只按需**（启动一次 + 有人调 `/health`，没有定时器；结论按 `HEALTH_PROBE_CACHE_TTL`
+  复用，默认 5 分钟）—— 本 WebUI 因此也只显示它给的值，不自己定时去探。
 
 （paperbox 的导入流水线在进程内，**单 worker**；WebUI 本身无此限制。）
 
@@ -84,8 +89,16 @@ uv run python scripts/manage_keys.py list      # 复核：prefix=webui、role=ad
 单页 + 六个 Tab，顶部一条常驻状态条。下面按 Tab 说明用途（界面截图未随仓库发布，
 本机起来后打开 <http://127.0.0.1:8088/> 即可看到）：
 
-顶部状态条：paperbox 四个依赖（postgres/opensearch/minio/embedding）的健康徽标、
-论文总数、任务总数、paperbox 版本，每 15 秒自动刷新（也可点「刷新」）。
+顶部状态条：paperbox **六个**依赖（postgres / opensearch / minio / embedding / rerank / docling）的健康徽标、
+论文总数、任务总数、paperbox 版本，以及依赖右侧的「刷新状态」按钮。
+
+- **不自动刷新**：打开页面取一次现值，之后完全按需 —— 点「刷新状态」才探测一次（写操作完成后也会顺手刷一次计数）。
+  第三方 embedding 探针按次计费，paperbox 侧因此把探测定成"只按需"，页面也就不按秒去问。
+- **四种状态四种颜色**：`ok` 绿 / `error` 红 / `disabled` 灰（没配，不是故障）/ `unknown` 蓝
+  （答得上话但还不能干活，例如容器起来了而模型还没加载完）。认不出的取值一律按 `unknown` 画。
+- **悬停看失败原因**：鼠标停在 `error` / `unknown` 的徽标上会显示失败原因、耗时与 paperbox 的**结论时刻**
+  （结论来自缓存时写明）；健康的徽标没有悬停提示。
+- paperbox 的必需依赖没就绪时（`degraded: true`），状态条右侧多一枚「依赖未就绪」。
 
 **① 检索** — 查询框 + 模式（hybrid / keyword / semantic）+ top_k + 年份范围，
 以及作者 / 期刊 / DOI / arXiv / 标签过滤。展开「更多过滤」还有 2026-09-22 后端新增的
@@ -191,7 +204,7 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/ui/health` | paperbox 五个依赖状态（含 `docling`，可为 `disabled`）+ 论文/任务计数 |
+| GET | `/api/ui/health` | paperbox 六个依赖状态（`rerank` / `docling` 可为 `disabled`、容器未加载完为 `unknown`）+ `degraded` + `dependencies`（逐项延迟 / 结论时刻 / 失败原因）+ 论文/任务计数 |
 | GET | `/api/ui/config` | 上传队列调参（并发 / 重试 / 上限），前端启动时读取 |
 | GET | `/api/ui/papers` | 论文列表：`limit` `offset` `status` `q` |
 | GET | `/api/ui/papers/{id}` | 论文元数据 |
@@ -234,7 +247,7 @@ uv run pytest                      # 后端 + 静态守卫 + 调起 node 测试
 node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍）
 ```
 
-`uv run pytest` 目前 **101** 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
+`uv run pytest` 目前 **111** 个用例，全部用 `httpx.MockTransport` 造假 paperbox，**不需要真实服务**：
 健康聚合与降级、参数透传（分页/状态/标题搜索/chunks/任务）、错误透传与 502、检索请求体逐字转发、
 导入 URL 的两种请求体与非法输入、multipart 上传、`/ingest/files` 多文件代理与逐文件结果、
 `/ingest/dir` 与 `/ingest/compressed` 的代理与默认值一致性、`Retry-After` 透传（有/无）、
@@ -245,10 +258,13 @@ node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍
 整库重建的转发（`/api/ui/papers/reindex`，含"请求体原样透传、不替 paperbox 决定 `dry_run`"）与
 两条冲突裁决路由的转发，
 原文流式下载、首页 HTML，以及静态资源守卫（多选上传队列的 DOM 结构、`app.js` 里的队列实现与
-新端点、检索过滤字段与六个 Tab 的页面骨架、六个 `*-logic.js` 的加载顺序与导出，
-「重建全库索引」的 DOM 与只发 `include_all`、冲突行渲染恒 5 格）。
+新端点、检索过滤字段与六个 Tab 的页面骨架、七个 `*-logic.js` 的加载顺序与导出，
+「重建全库索引」的 DOM 与只发 `include_all`、冲突行渲染恒 5 格），
+以及状态条这一轮的四条守卫：六格依赖徽标与顺序、刷新按钮在依赖右侧、
+**`app.js` 里不许出现定时探测**（`HEALTH_INTERVAL_MS` / `setInterval(loadHealth)`）、
+四种状态各有样式且失败原因挂在 `title` 上）。
 
-`tests/js/` 下是 **77** 个 `node:test` 用例，纯逻辑真跑：
+`tests/js/` 下是 **89** 个 `node:test` 用例，纯逻辑真跑：
 `queue_logic.test.mjs`（14）覆盖 `parseRetryAfter`、`retryDelayMs`（Retry-After 优先 / 指数增长 /
 抖动范围 / 上限）、`summarizeProgress`、`uploadSlots`、`shouldSuggestServerSide`；
 `search_logic.test.mjs` 覆盖过滤体构造（空值不发、`scheme:value` 校验、年份解析、多选标签）、
@@ -261,7 +277,10 @@ node --test tests/js/*.test.mjs    # 纯前端逻辑（pytest 里也会跑一遍
 导入报告与字段冲突两份行渲染的格数（冲突行恒 5 格：含「操作」列）与摘要去重；
 `reindex_logic.test.mjs`（9）覆盖原因码翻译、影响面文案（确认按钮上直接写篇数）、
 普查文案，以及两条容易做错的：**认不出的原因码要原样显示**，**"无需重建"要是个正常答案**
-而不是转圈。
+而不是转圈；
+`health_logic.test.mjs`（12）覆盖状态条的呈现规则：四种状态各一色、**认不出的取值按 `unknown` 而不是绿色**、
+悬停只在失败时给内容（含失败原因 / 耗时 / `checked_at`，缓存复用时写明）、
+`degraded` 只在 `true` 时说话、paperbox 不可达时全格红并带原因。
 
 真机验收（并发在途数、429 退避、两阶段进度、`QUEUED`、停止语义、收尾基线）的实测输出见
 [`docs/examine/acceptance-upload.md`](docs/examine/acceptance-upload.md)；2026-09-23 四项新能力
@@ -282,8 +301,9 @@ webui/
   client.py          PaperboxClient（httpx.AsyncClient 封装，携带 Bearer）
   routers/           system / config / papers / jobs / ingest / search / actions /
                      consistency / metadata / deps
-  static/            index.html  app.js  search-logic.js  jobs-logic.js
-                     queue-logic.js  consistency-logic.js  style.css（无构建）
+  static/            index.html  app.js  search-logic.js  jobs-logic.js  queue-logic.js
+                     consistency-logic.js  metadata-logic.js  reindex-logic.js
+                     health-logic.js（状态条）  style.css（无构建）
 tests/               后端代理层单测（MockTransport）+ tests/js 的 node:test
 docs/architecture/   活文档：00-overview（入口/文档地图）、01-paperbox-contract（契约基线）、
                      MVP-SPEC（实现规范）
@@ -293,7 +313,8 @@ docs/old/            被取代的活文档（NAME-YYYYMMDD.md）
 README.md            本文件
 ```
 
-前端只加载**静态文件**，没有构建步骤：`search-logic.js`、`jobs-logic.js`、`queue-logic.js`、`consistency-logic.js`
+前端只加载**静态文件**，没有构建步骤：`search-logic.js`、`jobs-logic.js`、`queue-logic.js`、
+`consistency-logic.js`、`metadata-logic.js`、`reindex-logic.js`、`health-logic.js`
 是"会算错"的纯逻辑（浏览器挂 `window.Paperbox*`，node 走 `module.exports`，由 `tests/js/` 真跑），
 `app.js` 只做 DOM 接线，`style.css` 是全部样式。
 

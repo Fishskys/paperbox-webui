@@ -99,8 +99,13 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
 - 超时：普通 30s，ingest 60s；文件下载用 `StreamingResponse` 转发（附
   `Content-Disposition` 与 `Content-Type`）。
 - `GET /api/ui/health` 返回：
-  `{"paperbox": {...paperbox /health 的 services...}, "version": "...", "papers": N, "jobs": N}`
+  `{"paperbox": {...paperbox /health 的 services...}, "degraded": true|false|null,
+    "dependencies": {...逐项 status/latency_ms/checked_at/reason/cached...},
+    "version": "...", "papers": N, "jobs": N}`
   （统计用 paperbox 的 `GET /api/papers` 与 `GET /api/jobs` 的 `total`；任一失败不要让整个接口 500）。
+  `degraded` / `dependencies` 是 2026-10-14 起 paperbox 新增的依赖面：BFF **不做解释**，原样透传给界面
+  （怎么画由 `webui/static/health-logic.js` 决定）；paperbox 不可达或返回非 2xx 时
+  `degraded` 为 `null`、`dependencies` 为 `{}`，错误仍放在 `paperbox.error` 里。
 - `GET /` 返回 `webui/static/index.html`；静态目录挂到 `/static`。
 - **搜索选项透传**（2026-09-22 paperbox 新增）：`POST /api/ui/search` 的 `filters` 原样转发，
   新增键 `venue_year` / `paper_type`（可多选→数组）/ `identifier`（`scheme:value`）/
@@ -123,8 +128,18 @@ WEBUI_BATCH_HINT_THRESHOLD=20     # 队列达到这个长度就提示改用 /ing
 
 ## 4. 前端要求（单页，中文界面）
 
-顶部状态条：paperbox 健康徽标（postgres/opensearch/minio/embedding 四项 ok/error）+ 论文数 + 任务数，
-每 15s 自动刷新。
+顶部状态条：paperbox **六格**健康徽标（postgres / opensearch / minio / embedding / rerank / docling，
+顺序与 paperbox 的 `services` 一致）+ 论文数 + 任务数。
+
+- **不自动刷新**：打开页面取一次，之后只按需 —— 依赖右侧的「刷新状态」按钮触发一次后端探测并重绘
+  （写操作完成后也会顺手刷一次计数）。**`app.js` 里不得出现 `setInterval(loadHealth)`**：
+  第三方 embedding 探针按次计费，paperbox 侧把探测定成"只按需"，页面不该按秒去问（静态守卫会拦）。
+- **四种状态各一色**：`ok` 绿 / `error` 红 / `disabled` 灰（没配，不是故障）/ `unknown` 蓝
+  （答得上话但还不能干活）；认不出的取值按 `unknown` 画（宁可黄/蓝，不要假绿）。
+- **悬停显示失败原因**：`error` / `unknown` 的徽标要给 `title`，内容是失败原因 + 耗时 + paperbox 的
+  `checked_at`（结论来自缓存时写明）；`ok` / `disabled` 不给 `title`（没失败就不显示）。
+- paperbox 的 `degraded` 为 `true` 时，状态条右侧显示「依赖未就绪」，否则隐藏。
+- 判定与文案一律在 `health-logic.js`（纯逻辑 + `node:test`），`app.js` 只把三件套（class / 文本 / title）贴到 DOM 上。
 
 **Tab 1「检索」**：查询框、模式（hybrid/keyword/semantic，默认 hybrid）、top_k（默认 10）、
 年份 from/to、作者/期刊/DOI/arXiv/标签过滤 → 结果卡片：标题（可点开详情）、作者、年份、
@@ -236,16 +251,18 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
 
 样式：纯 CSS、深浅色舒适可读、无外部字体/CDN；不要引入构建工具。
 
-**纯逻辑与 DOM 的分界**（三条都已落地）：`queue-logic.js`（上传队列）、`search-logic.js`
-（检索过滤体）、`jobs-logic.js`（任务分页与耗时）都是 UMD：浏览器挂 `window.PaperboxQueue` /
-`window.PaperboxSearch` / `window.PaperboxJobs`，node 走 `module.exports`。
+**纯逻辑与 DOM 的分界**：`queue-logic.js`（上传队列）、`search-logic.js`（检索过滤体）、
+`jobs-logic.js`（任务分页与耗时）、`consistency-logic.js`（问题码与模型普查）、`metadata-logic.js`
+（报告分页与排序）、`reindex-logic.js`（重建原因与影响面）、`health-logic.js`（状态条四种状态与悬停文案）
+都是 UMD：浏览器挂 `window.Paperbox*`，node 走 `module.exports`。
 "会算错"的规则一律放这里并配 `node:test`；`app.js` 只做接线与渲染。
-三个模块都必须**先于 `app.js`** 加载（index.html 的 `<script>` 顺序是硬约束，静态守卫会断言）。
+每个模块都必须**先于 `app.js`** 加载（index.html 的 `<script>` 顺序是硬约束，静态守卫会断言）。
 
 ## 5. 测试要求（tests/）
 
 - 用 `httpx.MockTransport` 造假 paperbox 响应，**不连真实服务**。
-- 至少覆盖：`/api/ui/health` 汇总；`/api/ui/papers` 参数透传（limit/offset/status/q）；
+- 至少覆盖：`/api/ui/health` 汇总（含 `degraded` / `dependencies` 原样透传、不可达与非 2xx 时
+  `degraded=null` + `dependencies={}`）；`/api/ui/papers` 参数透传（limit/offset/status/q）；
   paperbox 4xx/5xx 的错误透传；paperbox 不可达 → 502；`/api/ui/search` 请求体透传；
   `POST /api/ui/ingest` 与文件上传的参数传递。
 - 上传相关的额外覆盖：`Retry-After` 透传（有 / 无）、`POST /api/ui/ingest/files` 的多 part 转发、
@@ -264,14 +281,23 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
   - `/api/ui/metadata/*`：import 的 multipart 与 JSON 两条路径、`dry_run` 默认值、
     review 的 `status`/`limit`、attach 的 **source_id 在路径上**、apply 的 `{entries, mode}`。
   - 静态守卫：Tab 1 的扩展过滤字段（含 `paper_type` 的五个合法值）、六个 Tab 的页面骨架、
-    Tab 4 的十个阶段下拉与分页控件、三个逻辑模块的加载顺序。
+    Tab 4 的十个阶段下拉与分页控件、七个逻辑模块的加载顺序。
+- 状态条这一轮的额外覆盖（2026-10-14）：
+  - 后端：`degraded` / `dependencies` 原样透传；paperbox 不可达与非 2xx 时形状一致（`null` / `{}`）。
+  - 静态守卫：六格依赖徽标与顺序、刷新按钮在依赖右侧、**`app.js` 里没有 `HEALTH_INTERVAL_MS`
+    与 `setInterval(loadHealth)`**、四个状态类都在 `style.css` 里、`health-degraded` 默认隐藏。
+  - 纯逻辑：`tests/js/health_logic.test.mjs` —— 四种状态各一色、认不出的取值按 `unknown`、
+    悬停只在失败时给内容（原因 / 耗时 / `checked_at` / 缓存说明）、`degraded` 只在 `true` 时说话。
 - `uv run pytest` 必须全绿；`node --test tests/js/*.test.mjs` 必须全绿。
 
 ## 6. 验证要求（必须真跑，把真实输出写进最终回复）
 
 1. `uv run pytest` 全绿。
 2. 后台起 `uv run uvicorn webui.main:app --host 0.0.0.0 --port 8088`，然后：
-   - `curl -s http://127.0.0.1:8088/api/ui/health` → 五个依赖（含 docling）ok + papers/jobs 统计
+   - `curl -s http://127.0.0.1:8088/api/ui/health` → 六个依赖 ok + `degraded: false` +
+     `dependencies` 逐项详情 + papers/jobs 统计
+   - **不自动探测**（这条要真验）：打开页面后静置 40 秒，`webui.log` 里 `GET /api/ui/health`
+     只应多出 1 行（打开页面那一次）；点一次「刷新状态」再多 1 行
    - `curl -s "http://127.0.0.1:8088/api/ui/papers?limit=5"` → 4 篇论文
    - `curl -s -X POST http://127.0.0.1:8088/api/ui/search -H 'Content-Type: application/json' -d "{\"query\":\"attention\",\"mode\":\"hybrid\",\"top_k\":3}"` → 带 evidence 的结果
    - `curl -s http://127.0.0.1:8088/ | head -c 200` → HTML

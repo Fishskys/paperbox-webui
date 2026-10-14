@@ -13,8 +13,10 @@
   /* 一致性的纯逻辑在 consistency-logic.js：问题码中文映射与向量模型普查的摊平规则在那里，
    * 并被 node:test 真测（少一个码就是把英文码甩给使用者）。 */
   var CL = window.PaperboxConsistency;
+  /* 顶部状态条的纯逻辑在 health-logic.js：四种状态（ok/error/disabled/unknown）怎么画、
+   * 悬停什么时候给失败原因、degraded 怎么说，都在那里，并被 node:test 真测。 */
+  var HL = window.PaperboxHealth;
 
-  var HEALTH_INTERVAL_MS = 15000;
   var JOB_POLL_MS = 2000;
   var JOBS_AUTO_MS = 5000;
   var CONSISTENCY_AUTO_MS = 30000;
@@ -161,34 +163,34 @@
 
   /* ---------------- 顶部状态条 ---------------- */
 
-  function applyServiceChip(chip, value) {
-    var name = chip.getAttribute("data-service");
-    /* paperbox 对"配了才探"的依赖（如解析后端 docling）报 disabled：
-     * 那是"没配"，不是"坏了"，涂成红色会冤枉一套只用 pypdf 的部署。 */
-    if (value === "disabled") {
-      chip.className = "chip chip-pending";
-      chip.textContent = name + " · disabled";
-      return;
-    }
-    var ok = value === "ok";
-    chip.className = "chip " + (ok ? "chip-ok" : "chip-error");
-    chip.textContent = name + " · " + (ok ? "ok" : text(value, "error"));
+  /* 状态条只显示 BFF（`/api/ui/health` → paperbox `/health`）给的值。
+   * **这里没有任何定时探测**：第三方 embedding 探针是计费的，paperbox 侧因此把探测
+   * 定成"只按需"（启动一次 + 有人调 /health），页面就不该自作主张按秒去问。
+   * 要更新状态就点依赖右侧的「刷新状态」。 */
+  function paintHealthChip(chip, name, value, entry) {
+    var view = HL.chip(name, value, entry);
+    chip.className = view.className;
+    chip.textContent = view.text;
+    chip.setAttribute("title", view.title);        // 没失败就是空串，等于没有悬停提示
   }
 
   function loadHealth() {
     return api("/api/ui/health")
       .then(function (data) {
         var services = data.paperbox || {};
+        var dependencies = data.dependencies || {};
         var chips = document.querySelectorAll("#health-chips .chip[data-service]");
         for (var i = 0; i < chips.length; i++) {
           var chip = chips[i];
           var key = chip.getAttribute("data-service");
-          if (key === "error") {
-            chip.className = "chip chip-error";
-            chip.textContent = "paperbox · " + text(services.error, "error");
+          if ("error" in services) {              // paperbox 不可达/非 2xx：BFF 把原因放在这里
+            var down = HL.unreachable(chip.getAttribute("data-service"), services.error);
+            chip.className = down.className;
+            chip.textContent = down.text;
+            chip.setAttribute("title", down.title);
             continue;
           }
-          applyServiceChip(chip, key in services ? services[key] : undefined);
+          paintHealthChip(chip, key, key in services ? services[key] : undefined, dependencies[key]);
         }
         var papers = $("chip-papers");
         var jobs = $("chip-jobs");
@@ -196,15 +198,22 @@
         jobs.textContent = "任务 · " + text(data.jobs, "—");
         papers.className = "chip chip-info";
         jobs.className = "chip chip-info";
+        var degraded = HL.degradedText(data);      // 必需依赖没就绪时单独说一句
+        var degradedChip = $("health-degraded");
+        degradedChip.hidden = !degraded;
+        degradedChip.textContent = degraded;
         $("health-version").textContent = "版本 " + text(data.version, "unknown");
         $("health-time").textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
       })
       .catch(function (error) {
         var chips = document.querySelectorAll("#health-chips .chip[data-service]");
         for (var i = 0; i < chips.length; i++) {
-          chips[i].className = "chip chip-error";
-          chips[i].textContent = chips[i].getAttribute("data-service") + " · ?";
+          var down = HL.unreachable(chips[i].getAttribute("data-service"), error.message);
+          chips[i].className = down.className;
+          chips[i].textContent = down.text;
+          chips[i].setAttribute("title", down.title);
         }
+        $("health-degraded").hidden = true;
         $("health-version").textContent = "健康检查失败：" + error.message;
       });
   }
@@ -2803,7 +2812,13 @@
     $("btn-metadata-apply-run").addEventListener("click", runMetadataApply);
 
     $("btn-refresh-health").addEventListener("click", function () {
-      loadHealth();
+      var button = this;
+      /* 按需探测：这一下会真打 paperbox 的 /health（它自己还有 TTL 缓存，
+       * 第三方探针是计费的），所以按钮在请求期间禁用，避免连点。 */
+      button.disabled = true;
+      loadHealth().then(function () {
+        button.disabled = false;
+      });
     });
 
     $("detail-close").addEventListener("click", closeDetail);
@@ -2823,8 +2838,7 @@
   function init() {
     bind();
     loadConfig();                 // 拿不到配置就用内置默认，不阻塞上传
-    loadHealth();
-    window.setInterval(loadHealth, HEALTH_INTERVAL_MS);
+    loadHealth();                 // 打开页面取一次现值；之后只按需（「刷新状态」/ 写操作后）
   }
 
   if (document.readyState === "loading") {

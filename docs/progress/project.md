@@ -11,6 +11,7 @@
 | 3 | 2026-09-23 | 检索过滤选项、一致性 Tab、元数据导入/复核、任务分页与详情/重试 | `8891f58`/`20f5660`/`9fa08df`/`7c1078c`/`b410d3f` | 真机验收通过（`docs/examine/acceptance-2026-09-23.md`） |
 | 4 | 2026-09-23 | 去掉多余的 `static/.gitkeep`、忽略系统垃圾文件 | `ca6499a` | — |
 | 5 | 2026-10-08 | **升级到 paperbox 0.4.1**：docs 改四类目录（architecture/examine/progress/old）、专用 admin key（本地专用）、检索加精排开关（默认关）与候选数/后端回显、一致性接 embedding 模型普查与两个新问题码、补 `dir`/`compressed` 两个导入入口、0.4.x 失败路径可读文案 | `60a6b7d` / `e795618` / `bd967d3` / `6bd1cf6` / `68d5081` | **真机验收通过**（`docs/examine/acceptance-2026-10-08.md`） |
+| 6 | 2026-10-14 | **状态条改按需**：对齐 paperbox 当日重做的 `/health` 依赖面 —— 六格徽标（含可选 `rerank`）、四种状态各一色、悬停看失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按钮；**去掉 15s 定时探测**（第三方 embedding 探针按次计费）；新增纯逻辑模块 `health-logic.js` 与 `tests/js/health_logic.test.mjs` | `da2ed44` | 见「批次 6 的验收读数」 |
 
 ## 基线读数
 
@@ -21,6 +22,15 @@
 
 > 旧快照的读数（68 篇 / 2883 docs）是**历史事实**，不要在新文档里当现行值引用。
 
+### 批次 6 的验收读数（2026-10-14，实测）
+
+| 项 | 读数 |
+|---|---|
+| 单测 | `uv run pytest` 111 passed；`node --test tests/js/*.test.mjs` 89 passed |
+| 接口 | `GET http://127.0.0.1:8088/api/ui/health` → 六项全 `ok`、`degraded=false`、`dependencies` 逐项带 `latency_ms` / `checked_at`；版本 0.5.3、30 篇、61 个作业 |
+| 不自动探测 | 打开页面后静置 40 秒，`webui.log` 里 `GET /api/ui/health` 只多 1 行（打开页面那一次） |
+| 四种状态与悬停 | 浏览器实测计算样式：`ok` 绿 / `error` 红 / `disabled` 灰 / `unknown` 蓝；`error` 与 `unknown` 的 `title` 带原因、耗时、`checked_at`（缓存命中写明），`ok` / `disabled` 无 `title` |
+
 ## 未决项
 
 | # | 事项 | 状态 |
@@ -29,4 +39,5 @@
 | 2 | ~~目录导入与压缩包导入未接入~~ → 批次 5 已接入（`68d5081`）。注意 `dir` 有部署前置：`INGEST_LOCAL_ROOTS` 为空时端点不存在（404），本轮实测该变量**已指向** `C:\Users\<user>\Desktop\hermes\paperbox-data\datasets\corpus30` | 已做 |
 | 3 | `facets=true`（过滤键取值回显）未接；检索 `backend` 覆盖**已接**（`bd967d3`，空值 = 交给 `SEARCH_BACKEND`） | 部分待排 |
 | 5 | 429 的另一来源（批请求撞 backlog 水位）未在真机复现：水位默认 0 = 关闭，只有单测覆盖 | 说明性 |
+| 6 | `docs/architecture/01-paperbox-contract.md` 的"当前基线"行仍写 0.4.1，而本机跑的是 0.5.3：0.5.0 / 0.5.1 的变更面只在验收快照里，未逐条登记进契约文件 | 待排（补登记一次即可） |
 | 4 | CJK 分词口径变化后**存量块未重嵌**；界面若展示 `token_count` 需注明口径 | 说明性 |

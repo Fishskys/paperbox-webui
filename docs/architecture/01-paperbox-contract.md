@@ -9,6 +9,7 @@
 |---|---|---|
 | paperbox 版本 | **0.4.1**（commit `6442a83`，tag `v0.4.1`，GitHub release 标 Latest） | paperbox 仓库 `git describe --tags` / `CHANGELOG.md` |
 | 服务地址 | `http://127.0.0.1:8077`（单 worker；导入流水线在进程内） | `GET /health` → 200 |
+| 依赖健康面 | `GET /health` → `services` **六项**（`postgres` / `opensearch` / `minio` / `embedding` / `rerank` / `docling`，取值只有 `ok` / `error` / `disabled` / `unknown`）、`degraded`（**必需**依赖就绪）、`dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）。探测**只按需**（启动一次 + 有人调用），结论按 TTL 复用（默认 5 分钟） | `GET /health`（见 第 2 节 K 行） |
 | 索引 | 物理 `paper_chunks_v3`，读写走别名 `paper_chunks_current` | `GET /api/consistency` → `index` / `index_exists` |
 | 检索后端 | `SEARCH_BACKEND=native`（引擎侧 RRF + 按论文聚合） | 检索响应里的 `backend` |
 | 精排 | int8 档 `temsa/mmarco-mMiniLMv2-L12-H384-v1-onnx-cpu-qint8`，`RERANK_MAX_BATCH=4`；**REST 请求的 `rerank` 默认 `false`（需显式开）** | 响应里的 `rerank` 块 |
@@ -17,6 +18,10 @@
 | 上个基线 | 2026-09-23（见 `docs/examine/acceptance-2026-09-23.md`；当时 68 live / 2883 docs） | 该快照 |
 
 ## 2. 自 2026-09-23 以来 paperbox 的变更面
+
+> 当前基线行写的是 **0.4.1**（上次正式升级）。本机实际运行的是 **0.5.3**：0.5.0 / 0.5.1 的变更面见
+> `docs/examine/acceptance-2026-10-10.md`，2026-10-14 的依赖健康面见下表 K 行；基线行本身尚未补登记
+> （未决项，见 `docs/progress/project.md`）。
 
 按对 WebUI 的影响排序；「落地」列给出 paperbox 的版本与提交，便于回溯。
 
@@ -32,6 +37,7 @@
 | H | 新增端点：`GET /api/papers/{id}/degradations`、`GET /api/search-logs`、`GET/PATCH /api/papers/{id}/metadata`、`POST …/metadata/rollback`、`POST /api/papers/ingest/dir`、`POST /api/papers/ingest/compressed` | 09-30 起 | 按需接入（降级账本 / 检索日志 / 元数据编辑回滚 / 目录与压缩包导入） |
 | I | MCP 面（`/mcp`，10 个工具） | 0.3.0 | **与 WebUI 无关**，不接 |
 | J | 启动期维度三方对账（容器实测维度 ↔ `EMBEDDING_DIMENSION` ↔ 索引 mapping，实测不符**拒绝启动**） | 0.4.1（`4825cbc`） | WebUI 无感知；paperbox 起不来时 WebUI 只会看到 502 → 排障指路 paperbox `docs/architecture/04-embedding.md` 第 5b/9 节 |
+| K | **依赖健康面重做**：`/health` 从五项变**六项**（新增可选的 `rerank`）；`services` 取值固定为 `ok` / `error` / `disabled` / `unknown`；顶层新增 `degraded`（必需依赖是否就绪）；新增 `dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）；探针超时统一（10s，`HEALTH_TIMEOUT_OVERRIDES` 可按依赖覆盖）；**探测只按需**（启动一次 + 每次调用，没有定时器），结论按 `HEALTH_PROBE_CACHE_TTL` 复用（默认 5 分钟）；应用容器不再声明 compose healthcheck | paperbox 本地 main 2026-10-14（`379dbfe` / `0214e13` / `d57f0a3`，**未推送**；运行版本 0.5.3） | 状态条：六格徽标、四状态各一色、悬停显示失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按需按钮，**去掉 15s 定时探测** |
 
 ## 3. WebUI 用的 key 与角色
 
@@ -55,6 +61,9 @@
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8077/health         # 200
+curl -s http://127.0.0.1:8077/health | python -m json.tool | head -40
+#   期望：services 六项全 "ok"（rerank 未启用时为 "disabled"）、degraded=false、
+#         dependencies.<name> 带 latency_ms / checked_at（cached=true 表示复用了 TTL 内的结论）
 curl -s http://127.0.0.1:8077/api/consistency -H "authorization: Bearer $KEY" | python -m json.tool | head -30
 #   期望：index=paper_chunks_v3（别名 paper_chunks_current）、totals.papers_live=30、
 #         embedding_models.chunks/documents 各含 intfloat/multilingual-e5-large、problems=[]

@@ -137,6 +137,27 @@ code {
   border-color: var(--warn);
 }
 
+/* 状态条的依赖徽标按 paperbox 的四种状态上色：
+ * 绿 = ok / 红 = error（明确失败）/ 灰 = disabled（没配，不是故障）/
+ * 蓝 = unknown（答得上话但还不能干活，例如模型还没加载完）。
+ * 灰与蓝都不是"失败"，但也都不是"正常"，所以不能跟 chip-error 合并。 */
+.chip-disabled {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.chip-unknown {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 悬停才有内容的格子给个提示光标：title 为空（没失败）时不显示。 */
+.chip[title]:not([title=""]) {
+  cursor: help;
+}
+
 .chip-info {
   background: var(--bg-soft);
   color: var(--text-muted);

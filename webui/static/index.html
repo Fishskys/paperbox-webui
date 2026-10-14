@@ -14,14 +14,18 @@
         <span class="chip chip-pending" data-service="opensearch">opensearch · …</span>
         <span class="chip chip-pending" data-service="minio">minio · …</span>
         <span class="chip chip-pending" data-service="embedding">embedding · …</span>
+        <span class="chip chip-pending" data-service="rerank">rerank · …</span>
         <span class="chip chip-pending" data-service="docling">docling · …</span>
+        <!-- 刷新状态按需触发后端探测；页面**不会**定时探测（第三方 embedding 探针是计费的） -->
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-health"
+                title="立刻探测 paperbox 的 /health 并更新状态（本页面不会定时探测）">刷新状态</button>
         <span class="chip chip-info" id="chip-papers">论文 · …</span>
         <span class="chip chip-info" id="chip-jobs">任务 · …</span>
       </div>
       <div class="status-meta">
+        <span id="health-degraded" class="chip chip-error" hidden>依赖未就绪</span>
         <span id="health-version" class="muted">版本 …</span>
         <span id="health-time" class="muted"></span>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-health">刷新状态</button>
       </div>
     </header>
 
@@ -628,6 +632,7 @@
     <script src="/static/consistency-logic.js"></script>
     <script src="/static/metadata-logic.js"></script>
     <script src="/static/reindex-logic.js"></script>
+    <script src="/static/health-logic.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

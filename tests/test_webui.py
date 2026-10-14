@@ -47,13 +47,24 @@ class _RecordingStream(io.BytesIO):
 HEALTH_BODY = {
     "status": "ok",
     "version": "0.1.0",
+    # paperbox 2026-10-14 起：六项（多了可选的 rerank）+ degraded + 逐项 dependencies
+    "degraded": False,
     "services": {
         "postgres": "ok",
         "opensearch": "ok",
         "minio": "ok",
         "embedding": "ok",
+        "rerank": "ok",
         # 解析后端：paperbox 配了 DOCLING_URL 就探，没配报 disabled（不是 error）
         "docling": "ok",
+    },
+    "dependencies": {
+        "postgres": {
+            "status": "ok",
+            "required": True,
+            "latency_ms": 12.3,
+            "checked_at": "2026-10-14T12:47:06+00:00",
+        }
     },
 }
 
@@ -106,6 +117,8 @@ def test_health_aggregates_paperbox_state_and_counts() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["paperbox"] == HEALTH_BODY["services"]
+    assert body["degraded"] is False, "必需依赖就绪与否由 paperbox 说，BFF 原样透传"
+    assert body["dependencies"] == HEALTH_BODY["dependencies"], "逐项详情要能到界面（悬停看失败原因）"
     assert body["version"] == "0.1.0"
     assert body["papers"] == 4
     assert body["jobs"] == 7
@@ -135,6 +148,8 @@ def test_health_degrades_when_paperbox_is_unreachable() -> None:
     assert response.status_code == 200
     body = response.json()
     assert "error" in body["paperbox"]
+    assert body["degraded"] is None, "连不上就没有就绪结论，别猜"
+    assert body["dependencies"] == {}
     assert body["papers"] is None
     assert body["jobs"] is None
 
@@ -149,8 +164,47 @@ def test_health_reports_paperbox_error_status() -> None:
     body = client.get("/api/ui/health").json()
 
     assert "returned 503" in body["paperbox"]["error"]
+    assert body["degraded"] is None
+    assert body["dependencies"] == {}
     assert body["papers"] is None
     assert body["jobs"] is None
+
+
+def test_health_surfaces_a_degraded_paperbox_with_reasons() -> None:
+    """依赖挂了：端点仍然 200（状态条要能显示"不可用"而不是整页报错），原因要带上来。"""
+    payload = {
+        "status": "ok",
+        "version": "0.5.3",
+        "degraded": True,
+        "services": {"postgres": "ok", "opensearch": "ok", "minio": "ok",
+                     "embedding": "error", "rerank": "disabled", "docling": "ok"},
+        "dependencies": {
+            "embedding": {
+                "status": "error",
+                "required": True,
+                "latency_ms": 185.2,
+                "checked_at": "2026-10-14T12:47:06+00:00",
+                "cached": True,
+                "reason": 'HTTP 401: {"error":{"message":"Invalid API-key provided."}}',
+            },
+            "rerank": {"status": "disabled", "required": False},
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return ok_json(payload)
+        return ok_json({"total": 0})
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["degraded"] is True
+    assert body["paperbox"]["rerank"] == "disabled"
+    assert body["dependencies"]["embedding"]["reason"].startswith("HTTP 401")
+    assert body["dependencies"]["embedding"]["cached"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -1432,7 +1486,15 @@ def test_index_loads_every_logic_module_before_app_js() -> None:
     client, _ = build_app(_static_handler)
     html = client.get("/").text
 
-    for module in ("search-logic.js", "jobs-logic.js", "queue-logic.js", "consistency-logic.js"):
+    for module in (
+        "search-logic.js",
+        "jobs-logic.js",
+        "queue-logic.js",
+        "consistency-logic.js",
+        "metadata-logic.js",
+        "reindex-logic.js",
+        "health-logic.js",
+    ):
         assert f'src="/static/{module}"' in html, module
         assert html.index(module) < html.index("app.js"), module
 
@@ -1731,19 +1793,107 @@ def test_the_ingest_tab_offers_both_new_entry_points() -> None:
     assert "同挂载卷" in html or "服务端路径" in html
 
 
-def test_the_status_bar_carries_a_docling_chip() -> None:
-    """状态条要有一格 docling，且 paperbox 报 disabled 时不能涂成红色。"""
+def test_the_status_bar_lists_every_dependency_paperbox_reports() -> None:
+    """六格依赖徽标，顺序与 paperbox 的注册表一致（rerank 是 2026-10-14 新增的可选项）。"""
     client, _ = build_app(_static_handler)
     html = client.get("/").text
+
+    positions = []
+    for name in ("postgres", "opensearch", "minio", "embedding", "rerank", "docling"):
+        marker = 'data-service="%s"' % name
+        assert marker in html, "状态条缺 %s 那一格" % name
+        positions.append(html.index(marker))
+    assert positions == sorted(positions), "顺序要与 paperbox 的 services 一致"
+
+
+def test_the_refresh_button_sits_right_of_the_dependencies() -> None:
+    """刷新按钮放在依赖右侧，并且说清它是"按需探测"。"""
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    assert (
+        html.index('id="health-chips"')
+        < html.index('data-service="docling"')
+        < html.index('id="btn-refresh-health"')
+    ), "刷新按钮要在依赖徽标的右边"
+    assert "不会定时探测" in html, "按钮要说清它按需触发，不是定时器"
+
+
+def test_the_page_never_polls_health_on_a_timer() -> None:
+    """页面**不主动定时探测** /health。
+
+    第三方 embedding 探针按次计费，paperbox 侧因此把探测定成"只按需"（启动一次 +
+    有人调 /health），页面就不该按秒去问。更新只有三条路径：打开页面一次、点
+    「刷新状态」、写操作后刷计数 —— 全是被动或人触发的。
+    """
+    client, _ = build_app(_static_handler)
     body = client.get("/static/app.js").text
 
-    assert 'data-service="docling"' in html, "状态条缺 docling 那一格"
-    # 顺序与 paperbox 的 services 一致：postgres/opensearch/minio/embedding/docling
-    assert html.index('data-service="embedding"') < html.index('data-service="docling"')
-    for symbol in ("applyServiceChip", 'value === "disabled"', "chip-pending"):
-        assert symbol in body, symbol
-    # 明确区分三态：ok → 绿、disabled → 中性、其余 → 红
-    assert 'chip.className = "chip " + (ok ? "chip-ok" : "chip-error")' in body
+    assert "HEALTH_INTERVAL_MS" not in body, "定时探测的常量不该存在"
+    assert not re.search(r"setInterval\(\s*loadHealth", body), "loadHealth 不能被定时器驱动"
+    assert "loadHealth();" in body, "打开页面那一刻还是要取一次现值"
+    assert "btn-refresh-health" in body
+
+
+def test_the_dependency_chips_are_painted_by_the_logic_module() -> None:
+    """四种状态怎么画由 health-logic.js 决定（node 真测），app.js 只负责贴到 DOM 上。"""
+    client, _ = build_app(_static_handler)
+    body = client.get("/static/app.js").text
+    logic = client.get("/static/health-logic.js").text
+
+    assert "window.PaperboxHealth" in logic and "module.exports" in logic
+    for symbol in (
+        "stateOf",
+        "chipClass",
+        "chipText",
+        "chipTitle",
+        "unreachable",
+        "degradedText",
+    ):
+        assert symbol in logic, symbol
+    for call in ("HL.chip(", "HL.unreachable(", "HL.degradedText("):
+        assert call in body, call
+    assert '(ok ? "chip-ok" : "chip-error")' not in body, "状态判断不该再留在 app.js 里"
+    assert 'chip.setAttribute("title", view.title)' in body, "失败原因挂在 title 上（空串=不显示）"
+
+
+def test_the_four_states_have_distinct_styles() -> None:
+    """绿 ok / 红 error / 灰 disabled（没配）/ 蓝 unknown（答得上话但还不能干活）。"""
+    client, _ = build_app(_static_handler)
+    css = client.get("/static/style.css").text
+
+    for selector in (".chip-ok", ".chip-error", ".chip-disabled", ".chip-unknown"):
+        assert selector in css, selector
+
+
+def test_the_status_bar_can_say_dependencies_are_not_ready() -> None:
+    """paperbox 的 degraded 要有落点：为 true 时单独说一句，否则不占屏幕。"""
+    client, _ = build_app(_static_handler)
+    html = client.get("/").text
+
+    tag = re.search(r'<span[^>]*id="health-degraded"[^>]*>', html)
+    assert tag, "状态条缺 degraded 提示位"
+    assert "hidden" in tag.group(0), "没有 degraded 时不该显示"
+
+
+def test_health_logic_passes_the_node_tests() -> None:
+    """状态条的呈现规则真的跑一遍：``node --test tests/js/*.test.mjs``。"""
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - the local box has node v24
+        pytest.skip("node is not installed; the string guards above still apply")
+
+    suites = sorted(JS_TEST_DIR.glob("*.test.mjs"))
+    assert suites, "no JS test files found"
+    result = subprocess.run(
+        [node, "--test", *[str(path) for path in suites]],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fail 0" in result.stdout, result.stdout
 
 
 def test_a_disabled_dependency_is_passed_through_untouched() -> None:
