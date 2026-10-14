@@ -330,19 +330,23 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
   提交 `uv.lock`。
 - 不要提交 `.env`、`.venv`、`*.log`。
 
-## 8. 增量：对接 paperbox 0.4.1（2026-10-08）
+## 8. paperbox 契约要点（当前基线 0.6.0）
 
-契约基线见 `docs/architecture/01-paperbox-contract.md`。本节只写**规范层面的新增要求**。
+逐版变更面与出处见 `docs/architecture/01-paperbox-contract.md`（单一真实源）；本节只写**规范层面的要求**。
 
 ### 8.1 鉴权与角色
 
-- paperbox 自 0.4.0 起有 `AUTH_ENABLED` 总开关与三档密钥（`read < write < admin`）。WebUI 的 BFF 用一把
-  **`admin`** key（它代理了删除等写操作），由 paperbox 的 `scripts/manage_keys.py` 签发：
-  `create --name paperbox-webui --prefix webui --role admin`。
+- paperbox 是四档档位 `public < read < write < admin`：`AUTH_ENABLED` 是总开关，`AUTH_READ_ACCESS` 只管读门
+  （默认 `public` = 读端点不校验凭证）。WebUI 的 BFF **最低需要 `write`**（导入 / 重建单篇 / 改元数据 / **删除** ——
+  删除自 0.5.3 起并入 `write`），另外需要 **`admin`** 只是为了「重建全库索引」调 `POST /api/papers/reindex`
+  （`admin` 唯一需要它的端点）。由 paperbox 的 `scripts/manage_keys.py` 签发：
+  `create --prefix webui --role admin`（0.5.3 起没有 `--name`：`prefix` 是唯一标识符，同时用于日志归因与审计标签）。
 - 密钥**只写 WebUI 的 `.env`**（`PAPERBOX_API_KEY`；`.env` 在 `.gitignore` 第 1 行，绝不入 git，也不写进 `.env.example`）。
-  轮换：create 新前缀 → 改 `.env` → 重启 WebUI → `revoke` 旧前缀。
+  轮换：同前缀再 `create`（先询问，确认后同一事务替换、旧 key 立即失效）→ 改 `.env` → 重启 WebUI；
+  `revoke` 是硬删，同一个 `prefix` 之后仍可重发。
 - 失败语义必须可区分并在界面上可读：**401**（凭证没到 paperbox）→ 提示检查 `.env` 的 key；
-  **403**（不匹配/已吊销）→ 提示换 key；**403 `insufficient role`** → 提示档位不足（写需 write、删除需 admin）。
+  **403**（不匹配/已吊销）→ 提示换 key；**403 `insufficient role`** → 提示档位不足（导入 / 重建 / 改元数据 / 删除
+  需 `write`，整库重建需 `admin`）。
   代理层透传 paperbox 的状态码与 `detail`，另附一条 `hint`。
 
 ### 8.2 检索：精排开关（默认关）

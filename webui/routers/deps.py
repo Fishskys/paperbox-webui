@@ -49,8 +49,8 @@ _AUTH_HINTS: dict[int, str] = {
     ),
 }
 _ROLE_HINT = (
-    "这把 key 的档位不够：导入/重建索引/改元数据需 write，删除需 admin；"
-    "用 scripts/manage_keys.py create --role admin 另发一把"
+    "这把 key 的档位不够：导入 / 重建 / 改元数据 / 删除需 write，整库重建需 admin；"
+    "用 paperbox 的 scripts/manage_keys.py create --prefix <新前缀> --role admin 另发一把"
 )
 
 #: 0.4.x 的其它失败模式。每条 = (状态码, detail 里必须出现的片段, 说明)；
