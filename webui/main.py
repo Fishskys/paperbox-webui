@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .client import PaperboxClient
 from .config import STATIC_DIR, get_settings
 from .routers import actions, ingest, jobs, papers, search, system
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="paperbox WebUI", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="paperbox WebUI", version=__version__, lifespan=lifespan)
 
     for module in (
         system,

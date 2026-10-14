@@ -141,6 +141,10 @@ paperbox-webui/
 
    - 新增或变更依赖须同步更新 `pyproject.toml` 与 `uv.lock`。
 
+   - **改版本号属于同一件事**：`pyproject.toml`、`webui/__init__.py` 的 `__version__` 与 `uv.lock`（用 `uv lock` 重生成）
+     三处必须在**同一个提交**里改齐。漏了会出现假 diff 而不是报错：uv 发现锁里的项目版本过期就会**自动改写**它，
+     于是每次 `uv run` 都多一处改动。提交前可自检：`uv lock --check`（锁与配置不一致时 exit 1，且不改任何文件）。
+
 2. **自动化测试**：
 
    - `uv run pytest`（后端代理层 + 静态资源守卫 + 调起 node 用例）与 `node --test tests/js/*.test.mjs`（前端纯逻辑）必须全绿；新增或修改的行为必须有对应用例覆盖。
