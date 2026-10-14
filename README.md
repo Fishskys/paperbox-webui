@@ -19,7 +19,9 @@
 最先被怀疑的总是"谁写的时间不对"。
 
 paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
-由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.5.0**
+由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.6.0**
+（状态条的四状态 / `degraded` / `dependencies` / `rerank` 都来自 0.6.0 的 `/health`；更早的 paperbox 仍能跑，
+只是这些细节为空 —— 徽标只显示 `ok` / `error`，没有悬停原因）
 （基线契约与逐条依据见 [`docs/architecture/01-paperbox-contract.md`](docs/architecture/01-paperbox-contract.md)）。
 本 WebUI 依赖的关键契约：
 

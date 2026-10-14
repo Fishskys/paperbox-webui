@@ -8,4 +8,4 @@ behind is silently rewritten by the next ``uv`` command, which shows up as a str
 diff rather than an error.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
