@@ -46,7 +46,7 @@
 | # | 事项 | 状态 |
 |---|---|---|
 | 1 | 降级账本（`/api/papers/{id}/degradations`）、检索日志（`/api/search-logs`）、元数据编辑/回滚（`PATCH …/metadata`、`rollback`）未接入 | 待排（属能力补齐，非兼容性修复） |
-| 2 | ~~目录导入与压缩包导入未接入~~ → 批次 5 已接入（`68d5081`）。注意 `dir` 有部署前置：`INGEST_LOCAL_ROOTS` 为空时端点不存在（404），本轮实测该变量**已指向** `C:\Users\<user>\Desktop\hermes\paperbox-data\datasets\corpus30` | 已做 |
+| 2 | ~~目录导入与压缩包导入未接入~~ → 批次 5 已接入（`68d5081`）。注意 `dir` 有部署前置：`INGEST_LOCAL_ROOTS` 为空时端点不存在（404），本轮实测该变量**已指向** `<本机 paperbox-data>\datasets\corpus30` | 已做 |
 | 3 | `facets=true`（过滤键取值回显）未接；检索 `backend` 覆盖**已接**（`bd967d3`，空值 = 交给 `SEARCH_BACKEND`） | 部分待排 |
 | 5 | 429 的另一来源（批请求撞 backlog 水位）未在真机复现：水位默认 0 = 关闭，只有单测覆盖 | 说明性 |
 | 6 | ~~`docs/architecture/01-paperbox-contract.md` 的"当前基线"行仍写 0.4.1，而本机跑的是 0.5.3：0.5.0 / 0.5.1 的变更面只在验收快照里~~ → 批次 8 已补登记（`1cb4fc1`）：基线升到 0.6.0，0.5.0–0.6.0 逐版登记 | 已做 |

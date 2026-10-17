@@ -2,7 +2,7 @@
 
 日期：2026-09-20 ｜ 仓库：`paperbox-webui`（WebUI 改动 commit `5fe2bfc` 起，含验收期修复 `5764244`）
 
-paperbox 侧版本：`C:\Users\<user>\Desktop\hermes\paperbox`（2026-09-19 契约：`/api/papers/ingest/files`、
+paperbox 侧版本：`<本机 paperbox 仓库>`（2026-09-19 契约：`/api/papers/ingest/files`、
 `429 + Retry-After`、`/api/jobs/queue`、`QUEUED`）。**paperbox 一个字节都没改。**
 
 跑法：paperbox `uv run uvicorn app.main:app --host 127.0.0.1 --port 8077 --workers 1`（按每项验收需要

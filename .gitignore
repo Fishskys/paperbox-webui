@@ -18,3 +18,6 @@ docs/screenshots/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# init_your_proj 隐私检测工具（本地副本，不入库）
+init_your_proj/

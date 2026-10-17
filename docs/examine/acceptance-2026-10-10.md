@@ -3,9 +3,9 @@
 WebUI 侧在 paperbox 0.5.0 上新增/变动的东西，逐项真机跑过一遍的记录。口径与前几份一致：
 **跑的是运行中的服务**（8077 API + 8088 WebUI），不是 mock；每条都附当时的原始输出。
 
-环境：Linux <hostname>，paperbox 跑 0.5.0，语料 30 篇 live / 2302 chunks / 2302 documents，
-embedding `intfloat/multilingual-e5-large`（1024 维），解析器 `docling`（NAS
-`http://<nas-ip>:8091`）。
+环境：Linux 主机，paperbox 跑 0.5.0，语料 30 篇 live / 2302 chunks / 2302 documents，
+embedding `intfloat/multilingual-e5-large`（1024 维），解析器 `docling`（NAS，
+地址见 paperbox 侧 `.env` 的 `DOCLING_URL`）。
 
 ---
 

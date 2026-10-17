@@ -2,7 +2,7 @@
 
 日期：2026-09-23 ｜ 仓库：`paperbox-webui`（WebUI 改动 commit `8891f58`、`20f5660`、`9fa08df`、`7c1078c`）
 
-paperbox 侧版本：`C:\Users\<user>\Desktop\hermes\paperbox`（2026-09-22/23 契约：
+paperbox 侧版本：`<本机 paperbox 仓库>`（2026-09-22/23 契约：
 `/api/consistency`、`/api/metadata/*`、`GET /api/jobs` 的 `offset`/`stage`、`POST /api/jobs/{id}/retry`、
 检索过滤新增 `venue_year`/`paper_type`/`identifier`/四类索引词）。**paperbox 一个字节都没改。**
 
