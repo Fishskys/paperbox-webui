@@ -3,7 +3,7 @@
 本文件是 2026-10-08 那次「WebUI 对齐 paperbox 0.4.1」的**验收快照**：所有读数是当天在这台机器上跑出来的原始输出，不是转述。基线从 2026-09-23 的 68 live 改为**当前语料**（30 live / 2302 chunks）。
 
 - 被验对象：`paperbox-webui` main（本文件所在仓库）
-- 后端：paperbox **0.4.1**（`6442a83`，tag `v0.4.1`），`http://127.0.0.1:8077`
+- 后端：paperbox **0.4.1**（`00a828f`，tag `v0.4.1`），`http://127.0.0.1:8077`
 - WebUI：`http://127.0.0.1:8088`（`uv run uvicorn webui.main:app`）
 - 后端开关：`AUTH_ENABLED=true`、`MCP_ENABLED=true`、`SEARCH_BACKEND=native`
 

@@ -7,7 +7,7 @@
 
 | 项 | 值 | 核对方式 |
 |---|---|---|
-| paperbox 版本 | **0.6.0**（commit `f429761`，tag `v0.6.0`，GitHub release 标 Latest） | paperbox 仓库 `git describe --tags` / `CHANGELOG.md` |
+| paperbox 版本 | **0.6.0**（commit `78cec7d`，tag `v0.6.0`，GitHub release 标 Latest） | paperbox 仓库 `git describe --tags` / `CHANGELOG.md` |
 | 服务地址 | `http://127.0.0.1:8077`（单 worker；导入流水线在进程内） | `GET /health` → 200 |
 | 依赖健康面 | `GET /health` → `services` **六项**（`postgres` / `opensearch` / `minio` / `embedding` / `rerank` / `docling`，取值只有 `ok` / `error` / `disabled` / `unknown`）、`degraded`（**必需**依赖就绪）、`dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）。探测**只按需**（启动一次 + 有人调用），结论按 TTL 复用（默认 5 分钟） | `GET /health`（见 第 2 节 O 行） |
 | 索引 | 物理 `paper_chunks_v3`，读写走别名 `paper_chunks_current` | `GET /api/consistency` → `index` / `index_exists` |
@@ -26,21 +26,21 @@
 
 | # | 变化 | 落地 | 对 WebUI 的影响 |
 |---|---|---|---|
-| A | **鉴权 v1**：`AUTH_ENABLED` 总开关、`api_keys` 表（只存 sha256）、三档 `read < write < admin`；401（无凭证）/ 403（不匹配）/ 403 `insufficient role`；日志只记 key 前缀 | 0.4.0（`3730be4`/`dda913e`/`4cafa6c`，10-05） | 不破坏现有代理（BFF 一直带 Bearer），但 401/403 需要可读文案；WebUI 的 key 必须**重新申请**（见 第 3 节） |
-| B | REST 检索 `rerank` 默认 `false`；响应新增 `candidates`（候选数，`total` 为论文数真值）、`backend` | 0.2.0（`8067e10`，10-01） | 检索 Tab 加**精排开关（默认关）**，显示 `candidates` / `backend` / `rerank.model` / `rerank.took_ms` |
-| C | native hybrid 定档为默认、长池逐论文精排、精排换 int8 档、`facets=true` 回显过滤键取值 | 0.2.0（`51c08e1`/`33a65c7`/`e111f37`/`9a67ff6`） | 可选：检索里加 `backend` 覆盖、接 `facets` |
-| D | `/api/consistency` 新增 embedding 模型普查 `embedding_models.{chunks,documents}`、每篇 `embedding_models: list[str]`；新问题码 `embedding_model_mismatch`（更早还有 `parser_stamp_mismatch`） | 0.4.1（`4825cbc`，10-08） | 一致性 Tab 显示普查；问题码中文映射从 7 个补到 9 个 |
+| A | **鉴权 v1**：`AUTH_ENABLED` 总开关、`api_keys` 表（只存 sha256）、三档 `read < write < admin`；401（无凭证）/ 403（不匹配）/ 403 `insufficient role`；日志只记 key 前缀 | 0.4.0（`7656a6b`/`7fd11c4`/`27cb3bb`，10-05） | 不破坏现有代理（BFF 一直带 Bearer），但 401/403 需要可读文案；WebUI 的 key 必须**重新申请**（见 第 3 节） |
+| B | REST 检索 `rerank` 默认 `false`；响应新增 `candidates`（候选数，`total` 为论文数真值）、`backend` | 0.2.0（`020bb55`，10-01） | 检索 Tab 加**精排开关（默认关）**，显示 `candidates` / `backend` / `rerank.model` / `rerank.took_ms` |
+| C | native hybrid 定档为默认、长池逐论文精排、精排换 int8 档、`facets=true` 回显过滤键取值 | 0.2.0（`77a9334`/`930faed`/`f4c7ef6`/`bc7ad68`） | 可选：检索里加 `backend` 覆盖、接 `facets` |
+| D | `/api/consistency` 新增 embedding 模型普查 `embedding_models.{chunks,documents}`、每篇 `embedding_models: list[str]`；新问题码 `embedding_model_mismatch`（更早还有 `parser_stamp_mismatch`） | 0.4.1（`3c8f080`，10-08） | 一致性 Tab 显示普查；问题码中文映射从 7 个补到 9 个 |
 | E | 签名下载 `GET /api/downloads/{paper_id}?exp=&sig=`（免 Bearer，签名即凭据，过期/篡改 → 403） | 0.3.0 | 可选：浏览器可直接下载 PDF（现走 BFF 的 `/api/papers/{id}/file` 亦可） |
-| F | 请求体上限：JSON 8 MB / 其它 256 MB（声明长度即拒）→ 413；JSON 体按上限缓冲后回放，**chunked 也绕不过**；`/files` 超 `INGEST_MAX_REQUEST_MB`(200) → 413、文件数 >20 → 422；`/compressed` 非 zip → 415 | 0.4.0（P1-16 `08609b6`） | 413 / 415 需要可读文案（原先只有 429 有专门处理） |
-| G | 审查修复的行为面：staging GC 年龄保护、孤儿原件 24 h 清理、过滤器归一化、**CJK 感知 token 计数**、非 UUID 预检 404、docling 连接级超时、`docling_rejected` 账本码 | 0.4.0（`499e8ac`…`1fc3b06`） | `token_count` 口径变化（**存量块未重嵌**）；删除/清理语义更严 |
+| F | 请求体上限：JSON 8 MB / 其它 256 MB（声明长度即拒）→ 413；JSON 体按上限缓冲后回放，**chunked 也绕不过**；`/files` 超 `INGEST_MAX_REQUEST_MB`(200) → 413、文件数 >20 → 422；`/compressed` 非 zip → 415 | 0.4.0（P1-16 `94a8089`） | 413 / 415 需要可读文案（原先只有 429 有专门处理） |
+| G | 审查修复的行为面：staging GC 年龄保护、孤儿原件 24 h 清理、过滤器归一化、**CJK 感知 token 计数**、非 UUID 预检 404、docling 连接级超时、`docling_rejected` 账本码 | 0.4.0（`0118c45`…`eb125d3`） | `token_count` 口径变化（**存量块未重嵌**）；删除/清理语义更严 |
 | H | 新增端点：`GET /api/papers/{id}/degradations`、`GET /api/search-logs`、`GET/PATCH /api/papers/{id}/metadata`、`POST …/metadata/rollback`、`POST /api/papers/ingest/dir`、`POST /api/papers/ingest/compressed` | 09-30 起 | 按需接入（降级账本 / 检索日志 / 元数据编辑回滚 / 目录与压缩包导入） |
 | I | MCP 面（`/mcp`，10 个工具） | 0.3.0 | **与 WebUI 无关**，不接 |
-| J | 启动期维度三方对账（容器实测维度 ↔ `EMBEDDING_DIMENSION` ↔ 索引 mapping，实测不符**拒绝启动**） | 0.4.1（`4825cbc`） | WebUI 无感知；paperbox 起不来时 WebUI 只会看到 502 → 排障指路 paperbox `docs/architecture/04-embedding.md` 第 5b/9 节 |
-| K | **整库重建索引有了端点**：`POST /api/papers/reindex`（先解释"为什么要重建"，默认 `dry_run=true` 只报告）；**字段冲突有了人工出口**：`POST …/metadata/conflicts/dismiss`（保留现值）与 `POST …/metadata/rollback`（采纳被拒值），条目带 `provenance_id`；`/health` 增**第五项 `docling`**（只跑 pypdf 的部署报 `disabled`，不算故障） | 0.5.0（`f916213`，10-10） | 论文库 Tab 加「重建全库索引」卡片（只发 `include_all`，`job_ids` 逐个返回）；元数据 Tab 的库内冲突表加「操作」列两个动词；状态条加 docling 一格 |
-| L | **`paper_field_provenance.decision_at`**（迁移 `a41f7c2d9b30`，可空不回填）：记录人类**裁决**这一行的时刻；**全栈时区统一 `Asia/Shanghai`**（此前四个容器与 compose 都没设） | 0.5.1（`226bafa`，10-10） | WebUI 与 paperbox 同口径设时区（`webui/config.py` 导入期设定，`tests/test_timezone.py` 守卫）；`decision_at` 本仓库**暂不渲染** —— 复核清单只列未决分歧，那些恒无裁决时间 |
-| M | **读接口免鉴权**（13 个读端点不再挂档位依赖）、`/mcp` 传输层不再拒绝请求；**退役签名下载路由** `GET /api/downloads/{paper_id}`（`paper_get_file` 改写公开的文件端点） | 0.5.2（`6dc0864`，10-12） | 读端点在读门放开后不带凭证也是 200（WebUI 照旧带 Bearer，行为不变）；WebUI 一直走 BFF 的 `/api/papers/{id}/file`，不受影响 |
-| N | **读门策略化 + 四档档位**：新增 `AUTH_READ_ACCESS`（`public` \| `key`，默认 `public`），权限定为 `public < read < write < admin`，**删除并入 `write`**、`admin` 只剩批量重建；**密钥模型收口**：删 `api_keys.name`（迁移 `9c1d4b7a2e01`）、`prefix` 上限 16→32、重发同前缀即替换、`revoke` 改硬删（迁移 `8b4f0c2d6a17`） | 0.5.3（`51f924a`，10-12） | 见 第 3 节：WebUI 的 key 现在**只需要 `write` + 为了整库重建的 `admin`**（删除不再是 admin）；换 key 流程变为「同前缀重发即替换」，`prefix` 同时是日志归因与审计标签 |
-| O | **依赖健康面重做**：`/health` 从五项变**六项**（新增可选的 `rerank`）；`services` 取值固定为 `ok` / `error` / `disabled` / `unknown`；顶层新增 `degraded`（必需依赖是否就绪）；新增 `dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）；探针超时统一（10s，`HEALTH_TIMEOUT_OVERRIDES` 可按依赖覆盖）；**探测只按需**（启动一次 + 每次调用，没有定时器），结论按 `HEALTH_PROBE_CACHE_TTL` 复用（默认 5 分钟）；应用容器不再声明 compose healthcheck | 0.6.0（`f429761`，10-14；探针注册表 `cdf9f41`…`403fee1`） | 状态条：六格徽标、四状态各一色、悬停显示失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按需按钮，**去掉 15s 定时探测** |
+| J | 启动期维度三方对账（容器实测维度 ↔ `EMBEDDING_DIMENSION` ↔ 索引 mapping，实测不符**拒绝启动**） | 0.4.1（`3c8f080`） | WebUI 无感知；paperbox 起不来时 WebUI 只会看到 502 → 排障指路 paperbox `docs/architecture/04-embedding.md` 第 5b/9 节 |
+| K | **整库重建索引有了端点**：`POST /api/papers/reindex`（先解释"为什么要重建"，默认 `dry_run=true` 只报告）；**字段冲突有了人工出口**：`POST …/metadata/conflicts/dismiss`（保留现值）与 `POST …/metadata/rollback`（采纳被拒值），条目带 `provenance_id`；`/health` 增**第五项 `docling`**（只跑 pypdf 的部署报 `disabled`，不算故障） | 0.5.0（`810d195`，10-10） | 论文库 Tab 加「重建全库索引」卡片（只发 `include_all`，`job_ids` 逐个返回）；元数据 Tab 的库内冲突表加「操作」列两个动词；状态条加 docling 一格 |
+| L | **`paper_field_provenance.decision_at`**（迁移 `a41f7c2d9b30`，可空不回填）：记录人类**裁决**这一行的时刻；**全栈时区统一 `Asia/Shanghai`**（此前四个容器与 compose 都没设） | 0.5.1（`c61db18`，10-10） | WebUI 与 paperbox 同口径设时区（`webui/config.py` 导入期设定，`tests/test_timezone.py` 守卫）；`decision_at` 本仓库**暂不渲染** —— 复核清单只列未决分歧，那些恒无裁决时间 |
+| M | **读接口免鉴权**（13 个读端点不再挂档位依赖）、`/mcp` 传输层不再拒绝请求；**退役签名下载路由** `GET /api/downloads/{paper_id}`（`paper_get_file` 改写公开的文件端点） | 0.5.2（`b19a73d`，10-12） | 读端点在读门放开后不带凭证也是 200（WebUI 照旧带 Bearer，行为不变）；WebUI 一直走 BFF 的 `/api/papers/{id}/file`，不受影响 |
+| N | **读门策略化 + 四档档位**：新增 `AUTH_READ_ACCESS`（`public` \| `key`，默认 `public`），权限定为 `public < read < write < admin`，**删除并入 `write`**、`admin` 只剩批量重建；**密钥模型收口**：删 `api_keys.name`（迁移 `9c1d4b7a2e01`）、`prefix` 上限 16→32、重发同前缀即替换、`revoke` 改硬删（迁移 `8b4f0c2d6a17`） | 0.5.3（`8e191dc`，10-12） | 见 第 3 节：WebUI 的 key 现在**只需要 `write` + 为了整库重建的 `admin`**（删除不再是 admin）；换 key 流程变为「同前缀重发即替换」，`prefix` 同时是日志归因与审计标签 |
+| O | **依赖健康面重做**：`/health` 从五项变**六项**（新增可选的 `rerank`）；`services` 取值固定为 `ok` / `error` / `disabled` / `unknown`；顶层新增 `degraded`（必需依赖是否就绪）；新增 `dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）；探针超时统一（10s，`HEALTH_TIMEOUT_OVERRIDES` 可按依赖覆盖）；**探测只按需**（启动一次 + 每次调用，没有定时器），结论按 `HEALTH_PROBE_CACHE_TTL` 复用（默认 5 分钟）；应用容器不再声明 compose healthcheck | 0.6.0（`78cec7d`，10-14；探针注册表 `99021c6`…`e1f6e20`） | 状态条：六格徽标、四状态各一色、悬停显示失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按需按钮，**去掉 15s 定时探测** |
 
 ## 3. WebUI 用的 key 与角色
 

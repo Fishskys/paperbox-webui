@@ -20,7 +20,7 @@
 | 日期 | paperbox 版本 | 语料 | 出处 |
 |---|---|---|---|
 | 2026-09-23 | ≥ 2026-09-23 契约 | 68 live / 139 已删 / 68 MinIO 对象 / 2883 索引文档 | `docs/examine/acceptance-2026-09-23.md` |
-| 2026-10-08 | **0.4.1**（`6442a83`） | **30 live / 2302 chunks**，`problems=0` | `docs/examine/acceptance-2026-10-08.md`、`docs/architecture/01-paperbox-contract.md` |
+| 2026-10-08 | **0.4.1**（`00a828f`） | **30 live / 2302 chunks**，`problems=0` | `docs/examine/acceptance-2026-10-08.md`、`docs/architecture/01-paperbox-contract.md` |
 
 > 旧快照的读数（68 篇 / 2883 docs）是**历史事实**，不要在新文档里当现行值引用。
 
@@ -36,7 +36,7 @@
 ### 批次 8 的核对（2026-10-14）
 
 新增的五条逐项取自 paperbox 仓库的 `CHANGELOG.md`（`[0.5.0]`–`[0.6.0]` 段）与 tag→commit 对照：
-`v0.5.0` = `f916213`、`v0.5.1` = `226bafa`、`v0.5.2` = `6dc0864`、`v0.5.3` = `51f924a`、`v0.6.0` = `f429761`；
+`v0.5.0` = `810d195`、`v0.5.1` = `c61db18`、`v0.5.2` = `b19a73d`、`v0.5.3` = `8e191dc`、`v0.6.0` = `78cec7d`；
 权限与端点档位对着 paperbox 的 `docs/architecture/07-api.md` 第 2.2 节核。运行中的 paperbox 报 0.6.0，
 `/health` 六项全 `ok` + `degraded=false` + `dependencies` 逐项带 `latency_ms` / `checked_at`，
 `/api/consistency` `problems=0`（30 篇 / 2302 chunks）。
