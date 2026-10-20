@@ -356,3 +356,21 @@ class PaperboxClient:
 
     async def delete_paper(self, paper_id: str) -> PaperboxResponse:
         return await self._request("DELETE", f"/api/papers/{paper_id}")
+
+    async def clear_metadata(self, paper_id: str, dry_run: bool) -> PaperboxResponse:
+        """Clear one paper's bibliography metadata (keeps the paper and its PDF)."""
+        return await self._request(
+            "DELETE",
+            f"/api/papers/{paper_id}/metadata",
+            params={"dry_run": dry_run},
+        )
+
+    async def reextract_paper_metadata(
+        self, paper_id: str, *, dry_run: bool, refresh_index: bool = True
+    ) -> PaperboxResponse:
+        """Re-extract one paper's metadata from its stored PDF and fill the gaps."""
+        return await self._request(
+            "POST",
+            f"/api/papers/{paper_id}/metadata/reextract",
+            json={"dry_run": dry_run, "refresh_index": refresh_index},
+        )

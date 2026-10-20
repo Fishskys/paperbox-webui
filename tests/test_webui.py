@@ -613,6 +613,72 @@ def test_delete_action_reports_success_without_body() -> None:
     assert seen[0].url.path == "/api/papers/p1"
 
 
+def test_clear_metadata_forwards_dry_run_and_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"paper_id": "p1", "dry_run": True, "provenance": 3})
+
+    client, seen = build_app(handler)
+    response = client.delete("/api/ui/papers/p1/metadata", params={"dry_run": "true"})
+
+    assert response.status_code == 200
+    assert response.json()["paper_id"] == "p1"
+    request = seen[0]
+    assert request.method == "DELETE"
+    assert request.url.path == "/api/papers/p1/metadata"
+    assert request.url.params["dry_run"] == "true"
+
+
+def test_clear_metadata_defaults_to_not_dry_run() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"paper_id": "p1", "dry_run": False})
+
+    client, seen = build_app(handler)
+    client.delete("/api/ui/papers/p1/metadata")
+
+    # paperbox's endpoint default is dry_run=false; the BFF must not flip it.
+    assert seen[0].url.params["dry_run"] == "false"
+
+
+def test_reextract_defaults_to_dry_run_true() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"paper_id": "p1", "dry_run": True, "papers": 1})
+
+    client, seen = build_app(handler)
+    response = client.post("/api/ui/papers/p1/metadata/reextract", json={})
+
+    assert response.status_code == 200
+    request = seen[0]
+    assert request.method == "POST"
+    assert request.url.path == "/api/papers/p1/metadata/reextract"
+    body = json.loads(request.content)
+    assert body == {"dry_run": True, "refresh_index": True}
+
+
+def test_reextract_forwards_explicit_apply() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"paper_id": "p1", "dry_run": False})
+
+    client, seen = build_app(handler)
+    client.post(
+        "/api/ui/papers/p1/metadata/reextract",
+        json={"dry_run": False, "refresh_index": False},
+    )
+
+    body = json.loads(seen[0].content)
+    assert body == {"dry_run": False, "refresh_index": False}
+
+
+def test_reextract_error_status_is_passed_through() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "insufficient role"})
+
+    client, seen = build_app(handler)
+    response = client.post("/api/ui/papers/p1/metadata/reextract", json={})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "insufficient role"
+
+
 def test_jobs_queue_is_not_swallowed_by_the_job_id_route() -> None:
     """``/jobs/queue`` must be declared before ``/jobs/{job_id}``."""
 
