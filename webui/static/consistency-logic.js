@@ -36,6 +36,17 @@
 
   var UNKNOWN_MODEL = "unknown";
 
+  /* DOI/arXiv 镜像审计的漂移类型 → 中文（paperbox app/services/identifier_mirror_audit.py
+   * 的 DRIFT_KINDS，共 6 个）。键必须覆盖全部取值，少一个就把英文码甩给使用者。 */
+  var DRIFT_KIND_LABELS = {
+    mirror_without_identifier: "镜像有值·标识符缺失",
+    identifier_without_mirror: "标识符有·镜像为空",
+    value_mismatch: "镜像与标识符值不一致",
+    duplicate_identifier: "同篇重复标识符",
+    orphan_identifier: "标识符挂在已删/不存在论文",
+    missing_normalized_value: "缺归一化值"
+  };
+
   function isBlank(value) {
     return value === null || value === undefined || String(value).trim() === "";
   }
@@ -44,6 +55,15 @@
     if (isBlank(code)) return "";
     var key = String(code).trim();
     return Object.prototype.hasOwnProperty.call(ISSUE_LABELS, key) ? ISSUE_LABELS[key] : key;
+  }
+
+  /* DOI 镜像审计的漂移类型 → 中文；未知码原样返回（不隐藏新类型）。 */
+  function driftLabel(code) {
+    if (isBlank(code)) return "";
+    var key = String(code).trim();
+    return Object.prototype.hasOwnProperty.call(DRIFT_KIND_LABELS, key)
+      ? DRIFT_KIND_LABELS[key]
+      : key;
   }
 
   /* 普查 → 表格行 [[scope, model, count], ...]，chunks 在前、documents 在后，
@@ -97,8 +117,10 @@
 
   return {
     ISSUE_LABELS: ISSUE_LABELS,
+    DRIFT_KIND_LABELS: DRIFT_KIND_LABELS,
     UNKNOWN_MODEL: UNKNOWN_MODEL,
     issueLabel: issueLabel,
+    driftLabel: driftLabel,
     censusRows: censusRows,
     censusWarning: censusWarning,
     paperModelsText: paperModelsText

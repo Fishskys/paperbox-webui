@@ -101,3 +101,25 @@ test("per-paper models are joined for the row, empty becomes a dash", () => {
   assert.equal(CL.paperModelsText(null), "—");
   assert.equal(CL.paperModelsText(["", null, "model-a"]), "model-a");
 });
+
+/* ---------------- DOI 镜像审计的漂移类型映射 ---------------- */
+
+test("driftLabel covers every DRIFT_KINDS value paperbox emits", () => {
+  // app/services/identifier_mirror_audit.py 的 DRIFT_KINDS
+  for (const kind of [
+    "mirror_without_identifier",
+    "identifier_without_mirror",
+    "value_mismatch",
+    "duplicate_identifier",
+    "orphan_identifier",
+    "missing_normalized_value"
+  ]) {
+    assert.ok(CL.DRIFT_KIND_LABELS[kind], kind);
+    assert.notEqual(CL.driftLabel(kind), kind, kind);
+  }
+});
+
+test("driftLabel passes an unknown code through unchanged", () => {
+  assert.equal(CL.driftLabel("some_future_kind"), "some_future_kind");
+  assert.equal(CL.driftLabel(null), "");
+});

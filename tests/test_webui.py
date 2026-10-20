@@ -1089,6 +1089,50 @@ def test_consistency_unreachable_is_502() -> None:
     assert response.json()["detail"].startswith("paperbox unreachable")
 
 
+def test_identifier_mirror_audit_is_proxied() -> None:
+    audit = {
+        "checked_at": "2026-10-20T10:00:00Z",
+        "consistent": False,
+        "papers_total": 36,
+        "papers_live": 36,
+        "mirrors_set": {"doi": 8, "arxiv_id": 30},
+        "identifiers_total": {"doi": 8, "arxiv": 30},
+        "drift_totals": {"value_mismatch": 1},
+        "drifts": [
+            {
+                "kind": "value_mismatch",
+                "scheme": "doi",
+                "paper_id": "p1",
+                "mirror_value": "10.1/a",
+                "identifier_values": ["10.1/b"],
+                "detail": "mirror differs",
+            }
+        ],
+        "errors": [],
+        "truncated": False,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json(audit)
+
+    client, seen = build_app(handler)
+    response = client.get("/api/ui/consistency/doi")
+
+    assert response.status_code == 200
+    assert response.json()["drifts"][0]["kind"] == "value_mismatch"
+    assert seen[0].url.path == "/api/consistency/doi"
+
+
+def test_identifier_mirror_audit_unreachable_is_502() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    client, _ = build_app(handler)
+    response = client.get("/api/ui/consistency/doi")
+
+    assert response.status_code == 502
+
+
 # --------------------------------------------------------------------------- #
 # /api/ui/metadata/*
 # --------------------------------------------------------------------------- #

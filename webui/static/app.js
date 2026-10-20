@@ -2151,6 +2151,7 @@
     var summary = $("consistency-summary");
     clear(summary);
     summary.textContent = "检查中…";
+    loadMirrorAudit();
     return api("/api/ui/consistency?limit=" + encodeURIComponent(limit))
       .then(function (data) {
         var totals = data.totals || {};
@@ -2218,6 +2219,90 @@
         var empty = $("consistency-empty");
         empty.hidden = false;
         empty.textContent = "一致性检查失败：" + error.message;
+      });
+  }
+
+  /* DOI / arXiv 镜像审计（只读，GET /api/consistency/doi）。与三端对账独立：
+   * 它自己的请求失败只影响这块卡片，不拖累上面的结论。 */
+  var MIRROR_TOTALS = [
+    ["papers_live", "在库论文"],
+    ["papers_total", "论文总数"]
+  ];
+
+  function renderMirrorRow(drift) {
+    var tr = el("tr");
+    var paperCell = el("td", "cell-id");
+    var title = el("button", "link-title", text(drift.paper_id, "—"));
+    title.type = "button";
+    title.addEventListener("click", function () {
+      openDetail(drift.paper_id);
+    });
+    paperCell.appendChild(title);
+    tr.appendChild(paperCell);
+    tr.appendChild(el("td", null, text(drift.scheme, "—")));
+    tr.appendChild(el("td", null, CL.driftLabel(drift.kind)));
+    tr.appendChild(el("td", null, isBlankText(drift.mirror_value) ? "—" : String(drift.mirror_value)));
+    var ids = Array.isArray(drift.identifier_values) ? drift.identifier_values : [];
+    tr.appendChild(el("td", null, ids.length ? ids.join("，") : "—"));
+    tr.appendChild(el("td", "muted", text(drift.detail, "—")));
+    return tr;
+  }
+
+  function isBlankText(value) {
+    return value === null || value === undefined || String(value).trim() === "";
+  }
+
+  function loadMirrorAudit() {
+    var summary = $("consistency-mirror-summary");
+    clear(summary);
+    summary.textContent = "检查中…";
+    return api("/api/ui/consistency/doi")
+      .then(function (data) {
+        paintTotals($("consistency-mirror-totals"), MIRROR_TOTALS, data);
+        clear(summary);
+        summary.appendChild(
+          el(
+            "span",
+            "chip " + (data.consistent ? "chip-ok" : "chip-error"),
+            data.consistent ? "一致" : "有漂移"
+          )
+        );
+        var totals = data.drift_totals || {};
+        var driftCount = Object.keys(totals).reduce(function (sum, key) {
+          return sum + (Number(totals[key]) || 0);
+        }, 0);
+        summary.appendChild(
+          el("span", null, " · " + driftCount + " 处漂移 · 检查于 " + text(data.checked_at, "—"))
+        );
+
+        var errors = Array.isArray(data.errors) ? data.errors : [];
+        var strip = $("consistency-mirror-errors");
+        strip.hidden = errors.length === 0;
+        clear(strip);
+        if (errors.length) {
+          strip.appendChild(el("strong", null, "errors（该 store 未参与本次结论）"));
+          errors.forEach(function (item) {
+            strip.appendChild(el("div", null, item));
+          });
+        }
+
+        var body = $("consistency-mirror-body");
+        clear(body);
+        var drifts = Array.isArray(data.drifts) ? data.drifts : [];
+        drifts.forEach(function (drift) {
+          body.appendChild(renderMirrorRow(drift));
+        });
+        var empty = $("consistency-mirror-empty");
+        empty.hidden = drifts.length > 0;
+        empty.textContent = "镜像与标识符一致。";
+        var truncated = $("consistency-mirror-truncated");
+        truncated.hidden = !data.truncated;
+        truncated.textContent = data.truncated ? "漂移列表被截断，总数见上。" : "";
+      })
+      .catch(function (error) {
+        clear(summary);
+        summary.appendChild(el("span", "chip chip-error", "检查失败"));
+        summary.appendChild(el("span", null, " · " + error.message));
       });
   }
 

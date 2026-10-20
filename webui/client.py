@@ -206,6 +206,10 @@ class PaperboxClient:
         """Three-way drift report (``GET /api/consistency``, read-only)."""
         return await self._request("GET", "/api/consistency", params={"limit": limit})
 
+    async def identifier_mirrors(self) -> PaperboxResponse:
+        """Read-only DOI/arXiv mirror-vs-identifier audit (``GET /api/consistency/doi``)."""
+        return await self._request("GET", "/api/consistency/doi")
+
     async def import_metadata(
         self,
         *,

@@ -472,6 +472,26 @@
           <h2>store 级孤儿</h2>
           <div class="orphan-cols" id="consistency-orphans"></div>
         </div>
+
+        <div class="card">
+          <h2>DOI / arXiv 镜像审计 <span class="muted" id="consistency-mirror-summary">尚未检查</span></h2>
+          <p class="muted">
+            只读核对每篇论文的 <code>papers.doi</code>/<code>papers.arxiv_id</code>（历史镜像列）与
+            <code>paper_identifiers</code> 表是否一致。只报告不修复。
+          </p>
+          <div class="totals-grid" id="consistency-mirror-totals"></div>
+          <div class="errors-strip" id="consistency-mirror-errors" hidden></div>
+          <div class="table-wrap">
+            <table class="table" id="consistency-mirror-table">
+              <thead>
+                <tr><th>论文</th><th>方案</th><th>类型</th><th>镜像值</th><th>标识符值</th><th>说明</th></tr>
+              </thead>
+              <tbody id="consistency-mirror-body"></tbody>
+            </table>
+            <p class="empty" id="consistency-mirror-empty" hidden>镜像与标识符一致。</p>
+          </div>
+          <p class="muted" id="consistency-mirror-truncated" hidden></p>
+        </div>
       </section>
 
       <!-- Tab 6: 元数据（导入 / 复核 / 挂载 / 批量应用） -->

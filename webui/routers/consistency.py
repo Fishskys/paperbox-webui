@@ -38,3 +38,25 @@ async def consistency(
             headers=forward_headers(response),
         )
     return passthrough(response)
+
+
+@router.get("/consistency/doi")
+async def identifier_mirrors(
+    client: PaperboxClient = Depends(get_client),
+) -> JSONResponse:
+    """Relay the DOI/arXiv mirror-vs-identifier audit (``GET /api/consistency/doi``).
+
+    Read-only, like the three-way report; a store failure comes back in ``errors``
+    and the router passes it through untouched.
+    """
+    try:
+        response = await client.identifier_mirrors()
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    if response.ok:
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json(),
+            headers=forward_headers(response),
+        )
+    return passthrough(response)
