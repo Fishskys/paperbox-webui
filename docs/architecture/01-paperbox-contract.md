@@ -7,7 +7,7 @@
 
 | 项 | 值 | 核对方式 |
 |---|---|---|
-| paperbox 版本 | **0.6.0**（commit `78cec7d`，tag `v0.6.0`，GitHub release 标 Latest） | paperbox 仓库 `git describe --tags` / `CHANGELOG.md` |
+| paperbox 版本 | **0.7.0**（commit `3651de0`，tag `v0.7.0`，GitHub release 标 Latest） | paperbox 仓库 `git describe --tags` / `CHANGELOG.md` |
 | 服务地址 | `http://127.0.0.1:8077`（单 worker；导入流水线在进程内） | `GET /health` → 200 |
 | 依赖健康面 | `GET /health` → `services` **六项**（`postgres` / `opensearch` / `minio` / `embedding` / `rerank` / `docling`，取值只有 `ok` / `error` / `disabled` / `unknown`）、`degraded`（**必需**依赖就绪）、`dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）。探测**只按需**（启动一次 + 有人调用），结论按 TTL 复用（默认 5 分钟） | `GET /health`（见 第 2 节 O 行） |
 | 索引 | 物理 `paper_chunks_v3`，读写走别名 `paper_chunks_current` | `GET /api/consistency` → `index` / `index_exists` |
@@ -20,7 +20,7 @@
 ## 2. 自 2026-09-23 以来 paperbox 的变更面
 
 > 表按 paperbox 版本顺序，字母按登记顺序：A–J 是 2026-09-23 之后陆续登记、且至今仍然有效的契约面，
-> K–O 是 2026-10-14 这次补登记（0.5.0 → 0.6.0）。
+> K–O 是 2026-10-14 这次补登记（0.5.0 → 0.6.0），P–S 是 2026-10-20 登记（→ 0.7.0）。
 
 按对 WebUI 的影响排序；「落地」列给出 paperbox 的版本与提交，便于回溯。
 
@@ -41,6 +41,10 @@
 | M | **读接口免鉴权**（13 个读端点不再挂档位依赖）、`/mcp` 传输层不再拒绝请求；**退役签名下载路由** `GET /api/downloads/{paper_id}`（`paper_get_file` 改写公开的文件端点） | 0.5.2（`b19a73d`，10-12） | 读端点在读门放开后不带凭证也是 200（WebUI 照旧带 Bearer，行为不变）；WebUI 一直走 BFF 的 `/api/papers/{id}/file`，不受影响 |
 | N | **读门策略化 + 四档档位**：新增 `AUTH_READ_ACCESS`（`public` \| `key`，默认 `public`），权限定为 `public < read < write < admin`，**删除并入 `write`**、`admin` 只剩批量重建；**密钥模型收口**：删 `api_keys.name`（迁移 `9c1d4b7a2e01`）、`prefix` 上限 16→32、重发同前缀即替换、`revoke` 改硬删（迁移 `8b4f0c2d6a17`） | 0.5.3（`8e191dc`，10-12） | 见 第 3 节：WebUI 的 key 现在**只需要 `write` + 为了整库重建的 `admin`**（删除不再是 admin）；换 key 流程变为「同前缀重发即替换」，`prefix` 同时是日志归因与审计标签 |
 | O | **依赖健康面重做**：`/health` 从五项变**六项**（新增可选的 `rerank`）；`services` 取值固定为 `ok` / `error` / `disabled` / `unknown`；顶层新增 `degraded`（必需依赖是否就绪）；新增 `dependencies.<name>`（`reason` / `latency_ms` / `checked_at` / `cached`）；探针超时统一（10s，`HEALTH_TIMEOUT_OVERRIDES` 可按依赖覆盖）；**探测只按需**（启动一次 + 每次调用，没有定时器），结论按 `HEALTH_PROBE_CACHE_TTL` 复用（默认 5 分钟）；应用容器不再声明 compose healthcheck | 0.6.0（`78cec7d`，10-14；探针注册表 `99021c6`…`e1f6e20`） | 状态条：六格徽标、四状态各一色、悬停显示失败原因与结论时刻、`degraded` 提示、依赖右侧「刷新状态」按需按钮，**去掉 15s 定时探测** |
+| P | **论文列表按作者过滤**：`GET /api/papers` 增可重复 `author` 参数（归一化作者名匹配，多个 AND）；带标题 `q` 时按相关度排序 | 0.7.0（`db997d7`，10-20） | 论文库 Tab 加「作者」筛选（逗号分隔 → 重复 `author` 参数） |
+| Q | **元数据可只清不删**：`DELETE /api/papers/{id}/metadata?dry_run=`（清空题录层，保留论文/正文/PDF）；**重新提取**：单篇 `POST /api/papers/{id}/metadata/reextract`（write，`dry_run` 默认 true）、全库 `POST /api/metadata/reextract`（admin，默认 dry_run）——只补空缺、不覆盖 | 0.7.0（`b93faef`/`a7a08fc`，10-20） | 论文详情抽屉加「清除元数据」「重新提取元数据」；元数据 Tab 加「全库重提取」卡片 |
+| R | **DOI/arXiv 镜像只读审计**：`GET /api/consistency/doi`（`papers.doi`/`arxiv_id` 与 `paper_identifiers` 比对，6 类漂移，只报告不修复） | 0.7.0（`0e2c0e1`，10-20） | 一致性 Tab 加「DOI / arXiv 镜像审计」卡片；漂移类型补 6 个中文映射 |
+| S | **检索默认排除参考文献**：`POST /api/search` 的 `filters.include_references`（默认 `false`）；三端对账修复（旧索引 `text` 聚合 400 → 按实际 mapping 选字段、读失败按未知处理，不再伪造整库 missing_index） | 0.7.0（`6e37890`/`0549578`，10-20） | 检索 Tab 加「包含参考文献」开关；三端对账的 `errors` 文案沿用即可，无需改 |
 
 ## 3. WebUI 用的 key 与角色
 

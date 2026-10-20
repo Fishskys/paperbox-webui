@@ -19,9 +19,9 @@
 最先被怀疑的总是"谁写的时间不对"。
 
 paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / OpenSearch / MinIO / Embedding
-由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.6.0**（状态条的四状态 / `degraded` /
-`dependencies` / `rerank` 都来自 0.6.0 的 `/health`；更早的 paperbox 仍能跑，只是这些细节为空 —— 徽标只显示
-`ok` / `error`，没有悬停原因。基线契约与逐条依据见
+由 paperbox 一侧自行启动，本仓库不含这些组件），且版本不早于 **0.7.0**（状态条的四状态 / `degraded` /
+`dependencies` / `rerank` 来自 0.6.0 的 `/health`；作者筛选、只清/重提取元数据、DOI 镜像审计、检索参考文献开关
+来自 0.7.0；更早的 paperbox 仍能跑，只是对应功能为空。基线契约与逐条依据见
 [`docs/architecture/01-paperbox-contract.md`](docs/architecture/01-paperbox-contract.md)）。
 本 WebUI 依赖的关键契约：
 
@@ -31,7 +31,9 @@ paperbox 必须先在 **8077** 端口运行（它的依赖服务 PostgreSQL / Op
 - 鉴权开关 `AUTH_ENABLED` 与三档密钥（0.4.0 起）——**WebUI 需要一把 `admin` key**，见 第 2 节；
 - `/api/consistency` 的 `embedding_models` 普查与 `embedding_model_mismatch` 问题码、413/415 等失败码（0.4.1 起）；
 - `POST /api/papers/reindex`（整库重建，先 `dry_run=true` 报告、再 `dry_run=false` 排队）、
-  `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决，0.5.0 起）：
+  `POST /api/papers/{id}/metadata/conflicts/dismiss` 与 `metadata/rollback`（两条人工裁决，0.5.0 起）；
+- `GET /api/papers` 的 `author` 过滤（0.7.0）、`DELETE /api/papers/{id}/metadata` 与单篇/全库
+  `reextract`（0.7.0）、`GET /api/consistency/doi` 镜像审计（0.7.0）、检索 `filters.include_references`（0.7.0）。
 
 ```powershell
 cd <paperbox 后端目录>
@@ -102,7 +104,8 @@ uv run python scripts/manage_keys.py list      # 复核：prefix=webui、role=ad
   （结论来自缓存时写明）；健康的徽标没有悬停提示。
 - paperbox 的必需依赖没就绪时（`degraded: true`），状态条右侧多一枚「依赖未就绪」。
 
-**① 检索** — 查询框 + 模式（hybrid / keyword / semantic）+ top_k + 年份范围，
+**① 检索** — 查询框（**左侧有「搜索项」下拉，仿 IEEE：全部 / 作者 / DOI / arXiv**，选定范围后输入）
+，模式（hybrid / keyword / semantic）+ top_k + 年份范围，
 以及作者 / 期刊 / DOI / arXiv / 标签过滤。展开「更多过滤」还有 2026-09-22 后端新增的
 **会议/期刊届（`venue_year`）/ 论文类型（`paper_type`，多选）/ 标识符（`scheme:value`）/
 四类索引词（`ieee_terms` / `author_terms` / `dynamic_index_terms` / `source_tags`）**。
@@ -125,8 +128,8 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
   过滤才会反映新值 —— 界面上的提示是同一句话。
 
 **② 论文库** — 表格列出全部论文（标题 / 年份 / 状态 / 作者数 / 创建时间），
-支持状态过滤与标题搜索、20 条一页的分页；每行可「详情 / 下载原文 / 重建索引 / 删除」
-（删除需二次确认，是软删除）。
+支持状态过滤、标题搜索、**作者过滤（0.7.0，逗号分隔，多作者取"同时满足"）**、20 条一页的分页；
+每行可「详情 / 下载原文 / 重建索引 / 删除」（删除需二次确认，是软删除）。
 
 表格下面有一张 **「重建全库索引」** 卡片（对齐 paperbox 0.5.0 的 `POST /api/papers/reindex`）：
 点一下先**预览** —— 「N 篇待重建」徽标、每条检测理由（换 embedding 模型 / 换解析器 / 未决降级 /
@@ -179,6 +182,9 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 「换模型只换了一半」的提醒 —— 那批向量彼此不可比，得整库重嵌。**九个问题码**都有中文说明
 （`parser_stamp_mismatch`、`embedding_model_mismatch` 是 0.4.x 新增的两个），认不出的码原样显示而不是消失。**某个 store 连不上时它出现在 `errors` 横条里，另外两端照常给结论** ——
 这是 paperbox 的语义，界面不会因此变成错误页。
+另有一块 **DOI / arXiv 镜像审计**卡片（0.7.0 的 `GET /api/consistency/doi`）：只读核对
+`papers.doi`/`papers.arxiv_id` 与 `paper_identifiers` 是否一致，报告在库/总论文数与 6 类漂移
+（镜像有值·标识符缺失 / 标识符有·镜像为空 / 值不一致 / 同篇重复 / 悬空标识符 / 缺归一化值），只报告不修复。
 
 **⑥ 元数据** — 元数据导入闭环：
 1. **导入**：选来源类型（`import_file` 默认 / `ieee_api` / `crossref` / `arxiv_api` / `manual`）、
@@ -197,9 +203,13 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
    试运行产生的条目没有 `provenance_id`，那一格显示「试运行未落库」而不是给个点了没用的按钮。
 3. **批量应用**：把「哪份来源属于哪篇论文」的判定成批发给 `POST /api/metadata/apply`；
    可从上次报告的 `source_ref` 一键预填 entries，`overwrite` 模式会二次确认。
+4. **全库重提取元数据**（0.7.0）：可选「篇数上限」与「顺带刷新索引快照」；「试运行」先看受影响篇数/补的字段、
+   再确认写入；「执行全库重提取」二次确认后落库。只补空缺、不覆盖已有/人工值，不重解析正文、不重嵌（admin、可能很久）。
 
 **论文详情抽屉** — 从任意页面打开：元数据（作者、年份、DOI、arXiv、状态、指纹、时间）、
-文件列表、chunks 分页列表（chunk 序号、页码范围、章节、文本），并提供下载原文 / 重建索引 / 删除。
+文件列表、chunks 分页列表（chunk 序号、页码范围、章节、文本），并提供下载原文 / 重建索引 /
+**清除元数据（0.7.0，只清题录层、保留论文与 PDF，先预览再确认）** /
+**重新提取元数据（0.7.0，从 PDF 补空缺，先 dry-run 预览再写入）** / 删除。
 按 `Esc`、点遮罩或点「关闭」都能收起。
 
 ## 4. 后端 API（全部在 `/api/ui` 下）
@@ -208,24 +218,28 @@ score（按本次查询归一化的 0~1）与 relevance 徽标（high/medium/low
 |------|------|------|
 | GET | `/api/ui/health` | paperbox 六个依赖状态（`rerank` / `docling` 可为 `disabled`、容器未加载完为 `unknown`）+ `degraded` + `dependencies`（逐项延迟 / 结论时刻 / 失败原因）+ 论文/任务计数 |
 | GET | `/api/ui/config` | 上传队列调参（并发 / 重试 / 上限），前端启动时读取 |
-| GET | `/api/ui/papers` | 论文列表：`limit` `offset` `status` `q` |
+| GET | `/api/ui/papers` | 论文列表：`limit` `offset` `status` `q` `author`（可重复，AND） |
 | GET | `/api/ui/papers/{id}` | 论文元数据 |
 | GET | `/api/ui/papers/{id}/chunks` | 论文 chunks：`limit` `offset` |
 | GET | `/api/ui/papers/{id}/file` | 原文 PDF（流式转发） |
 | POST | `/api/ui/papers/reindex` | **整库重建索引**：请求体原样转发给 paperbox（默认 `dry_run=true` 只报告），`job_ids` 逐个返回 |
 | POST | `/api/ui/papers/{id}/reindex` | 重建该论文索引，返回 `job_id` |
 | DELETE | `/api/ui/papers/{id}` | 软删除 |
+| DELETE | `/api/ui/papers/{id}/metadata` | **清除题录元数据**（保留论文/正文/PDF）：`dry_run`（默认 false） |
+| POST | `/api/ui/papers/{id}/metadata/reextract` | **重新提取单篇元数据**：`{"dry_run":true,"refresh_index":true}`（dry_run 默认 true） |
 | GET | `/api/ui/jobs` | 任务列表：`limit`（1..200）`offset` `stage` `paper_id`，响应回显窗口与 `total` |
 | GET | `/api/ui/jobs/queue` | paperbox 队列深度（`running` / `queued` / 优先级分布） |
 | GET | `/api/ui/jobs/{id}` | 单个任务状态 |
 | POST | `/api/ui/jobs/{id}/retry` | 重试失败作业（后端 409 = 不是 FAILED） |
 | GET | `/api/ui/consistency` | 三端对账：`limit`（问题条目上限），只读、**永不抛** |
+| GET | `/api/ui/consistency/doi` | **DOI/arXiv 镜像审计**（只读）：`papers.doi`/`arxiv_id` 与 `paper_identifiers` 比对 |
 | POST | `/api/ui/metadata/import` | 元数据导入：multipart `file` 或 JSON 体，`dry_run`（默认 true）`apply` `source_type` `limit` |
 | GET | `/api/ui/metadata/review` | 待人工决定的来源记录：`status` `limit` |
 | POST | `/api/ui/metadata/sources/{source_id}/attach` | 把某份来源挂到论文：`{"paper_id": "..."}` |
 | POST | `/api/ui/papers/{id}/metadata/conflicts/dismiss` | 裁决「保留现值」：`{"field":"...","provenance_id":"..."}` |
 | POST | `/api/ui/papers/{id}/metadata/rollback` | 裁决「采纳被拒值」：同上两个字段 |
 | POST | `/api/ui/metadata/apply` | 批量应用判定：`{"entries": [...], "mode": "fill\|overwrite"}` |
+| POST | `/api/ui/metadata/reextract` | **全库重提取元数据**（admin，可能很久）：`{"dry_run":true,"limit":null,"refresh_index":true}`（dry_run 默认 true） |
 | POST | `/api/ui/ingest` | URL 导入：`{"source_type":"url","source":"..."}`（也接受 `{"url":"..."}`） |
 | POST | `/api/ui/ingest/file` | 本地上传（旧端点）：multipart 字段 `file` |
 | POST | `/api/ui/ingest/files` | 本地上传（新端点）：multipart 字段 `files`，可重复，逐文件结果 |

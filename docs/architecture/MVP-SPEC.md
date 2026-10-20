@@ -330,7 +330,7 @@ chunks 分页列表（显示 chunk_index、页码范围、章节、文本前若�
   提交 `uv.lock`。
 - 不要提交 `.env`、`.venv`、`*.log`。
 
-## 8. paperbox 契约要点（当前基线 0.6.0）
+## 8. paperbox 契约要点（当前基线 0.7.0）
 
 逐版变更面与出处见 `docs/architecture/01-paperbox-contract.md`（单一真实源）；本节只写**规范层面的要求**。
 
