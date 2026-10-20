@@ -639,6 +639,20 @@
     });
     actions.appendChild(reindex);
 
+    var reextract = el("button", "btn btn-ghost btn-sm", "重新提取元数据");
+    reextract.type = "button";
+    reextract.addEventListener("click", function () {
+      reextractMetadata(paper.paper_id, text(paper.title, "该论文"), reextract);
+    });
+    actions.appendChild(reextract);
+
+    var clearMeta = el("button", "btn btn-ghost btn-sm", "清除元数据");
+    clearMeta.type = "button";
+    clearMeta.addEventListener("click", function () {
+      clearMetadata(paper.paper_id, text(paper.title, "该论文"), clearMeta);
+    });
+    actions.appendChild(clearMeta);
+
     var remove = el("button", "btn btn-danger btn-sm", "删除");
     remove.type = "button";
     remove.addEventListener("click", function () {
@@ -749,6 +763,97 @@
       })
       .catch(function (error) {
         toast("删除失败：" + error.message, "error");
+      });
+  }
+
+  /* 清除元数据：先 dry_run 预览「将删除什么」，确认后再真正执行。
+   * 只清题录层（标题/作者/DOI/年份/摘要/标签…），论文本体、正文与 PDF 都保留。 */
+  function clearMetadata(paperId, label, button) {
+    if (button) button.disabled = true;
+    api("/api/ui/papers/" + encodeURIComponent(paperId) + "/metadata?dry_run=true", {
+      method: "DELETE"
+    })
+      .then(function (preview) {
+        var counts = [
+          "来源 " + text(preview.source_rows, "0"),
+          "标识符 " + text(preview.identifier_rows, "0"),
+          "作者关联 " + text(preview.author_links, "0"),
+          "标签关联 " + text(preview.tag_links, "0"),
+          "字段声明 " + text(preview.provenance_rows, "0")
+        ].join("，");
+        var ok = window.confirm(
+          "将清除《" +
+            label +
+            "》的题录元数据（保留论文本体、正文与 PDF）：\n" +
+            counts +
+            "\n\n确认执行？"
+        );
+        if (!ok) return null;
+        return api(
+          "/api/ui/papers/" + encodeURIComponent(paperId) + "/metadata?dry_run=false",
+          { method: "DELETE" }
+        ).then(function () {
+          toast("已清除元数据：" + label, "ok");
+          loadDetail();
+          loadLibrary();
+        });
+      })
+      .catch(function (error) {
+        toast("清除元数据失败：" + error.message, "error");
+      })
+      .then(function () {
+        if (button) button.disabled = false;
+      });
+  }
+
+  /* 重新提取元数据：dry_run=true 先预览「会补哪些字段」，确认后再落库。
+   * 走 rule-R2「只填空、不覆盖已有/人工值」，不重解析正文、不重嵌。 */
+  function reextractMetadata(paperId, label, button) {
+    if (button) button.disabled = true;
+    var path = "/api/ui/papers/" + encodeURIComponent(paperId) + "/metadata/reextract";
+    api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: true })
+    })
+      .then(function (preview) {
+        var changes = Array.isArray(preview.changes) ? preview.changes : [];
+        var lines = changes.slice(0, 8).map(function (change) {
+          return "· " + text(change.field, "?") + "：" + text(change.old, "（空）") + " → " + text(change.new, "?");
+        });
+        var body =
+          "《" +
+          label +
+          "》重新提取（dry run）：将补 " +
+          text(preview.added_fields, "0") +
+          " 个字段、" +
+          text(preview.added_identifiers, "0") +
+          " 个标识符" +
+          (lines.length ? "：\n" + lines.join("\n") : "") +
+          "\n\n确认写入？";
+        if (!window.confirm(body)) return null;
+        return api(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: false })
+        }).then(function (applied) {
+          toast(
+            "已重新提取：补 " +
+              text(applied.added_fields, "0") +
+              " 字段、" +
+              text(applied.added_identifiers, "0") +
+              " 标识符",
+            "ok"
+          );
+          loadDetail();
+          loadLibrary();
+        });
+      })
+      .catch(function (error) {
+        toast("重新提取失败：" + error.message, "error");
+      })
+      .then(function () {
+        if (button) button.disabled = false;
       });
   }
 
