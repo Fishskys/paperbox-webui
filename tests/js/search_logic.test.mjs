@@ -302,3 +302,49 @@ test("searchSummary degrades gracefully on a thin payload", () => {
   assert.match(text, /命中 — 篇/);
   assert.match(text, /top_k 10/);
 });
+
+/* ---------------- 搜索项下拉（仿 IEEE）+ 参考文献开关 ---------------- */
+
+test("buildScopedSearch: scope=all keeps the plain free-text query", () => {
+  const out = search.buildScopedSearch({ scope: "all", value: "attention", mode: "hybrid", topK: 10 });
+  assert.equal(out.body.query, "attention");
+  assert.deepEqual(out.body.filters, {});
+});
+
+test("buildScopedSearch: scope=author adds an authors filter (and keeps the query)", () => {
+  const out = search.buildScopedSearch({ scope: "author", value: "David Patterson", mode: "hybrid", topK: 10 });
+  assert.equal(out.body.query, "David Patterson");
+  assert.deepEqual(out.body.filters.authors, ["David Patterson"]);
+});
+
+test("buildScopedSearch: scope=doi adds a doi filter", () => {
+  const out = search.buildScopedSearch({ scope: "doi", value: "10.1109/isscc49663.2026.11409034" });
+  assert.equal(out.body.filters.doi, "10.1109/isscc49663.2026.11409034");
+});
+
+test("buildScopedSearch: scope=arxiv adds an arxiv_id filter", () => {
+  const out = search.buildScopedSearch({ scope: "arxiv", value: "1706.03762" });
+  assert.equal(out.body.filters.arxiv_id, "1706.03762");
+});
+
+test("buildScopedSearch: an unknown scope falls back to all (no filter added)", () => {
+  const out = search.buildScopedSearch({ scope: "venue", value: "x" });
+  assert.deepEqual(out.body.filters, {});
+});
+
+test("buildScopedSearch: includeReferences sets include_references=true, default absent", () => {
+  const off = search.buildScopedSearch({ scope: "all", value: "x" });
+  assert.equal(off.body.filters.include_references, undefined);
+  const on = search.buildScopedSearch({ scope: "all", value: "x", includeReferences: true });
+  assert.equal(on.body.filters.include_references, true);
+});
+
+test("buildScopedSearch: existing filters are preserved and extended", () => {
+  const out = search.buildScopedSearch({
+    scope: "author",
+    value: "a. lee",
+    filters: { year_from: 2020 }
+  });
+  assert.equal(out.body.filters.year_from, 2020);
+  assert.deepEqual(out.body.filters.authors, ["a. lee"]);
+});

@@ -42,10 +42,19 @@
       <!-- Tab 1: 检索 -->
       <section class="panel is-active" id="panel-search" role="tabpanel">
         <form class="card form-grid" id="search-form">
-          <label class="field field-wide">
+          <div class="field field-wide">
             <span>查询</span>
-            <input type="search" id="search-query" placeholder="例如：attention" autocomplete="off" />
-          </label>
+            <div class="search-input-row">
+              <select id="search-scope" title="搜索项（仿 IEEE：先选范围再输入）">
+                <option value="all" selected>全部（标题+正文）</option>
+                <option value="title">标题</option>
+                <option value="author">作者</option>
+                <option value="doi">DOI</option>
+                <option value="arxiv">arXiv</option>
+              </select>
+              <input type="search" id="search-query" placeholder="例如：attention" autocomplete="off" />
+            </div>
+          </div>
           <label class="field">
             <span>模式</span>
             <select id="search-mode">
@@ -72,6 +81,15 @@
               <label class="check"
                 ><input type="checkbox" id="search-rerank" /> 开启 cross-encoder
                 精排（慢：一次池约 2–5 s）</label
+              >
+            </div>
+          </div>
+          <div class="field">
+            <span>参考文献</span>
+            <div class="check-row">
+              <label class="check"
+                ><input type="checkbox" id="search-include-references" />
+                包含参考文献切块（默认排除；引文类查询才需要）</label
               >
             </div>
           </div>

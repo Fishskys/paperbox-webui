@@ -268,17 +268,21 @@
       dynamicIndexTerms: $("filter-dynamic-index-terms").value,
       sourceTags: $("filter-source-tags").value
     });
-    return Object.assign(
-      SL.buildSearchBody({
-        query: $("search-query").value,
-        mode: $("search-mode").value,
-        topK: $("search-topk").value,
-        rerank: $("search-rerank").checked,
-        backend: $("search-backend").value,
-        filters: built.filters
-      }),
-      { problems: built.problems }
-    );
+    // 搜索项下拉（仿 IEEE）：把「范围 + 输入」叠加到过滤里，再组装请求体。
+    var scoped = SL.buildScopedSearch({
+      scope: $("search-scope").value,
+      value: $("search-query").value,
+      mode: $("search-mode").value,
+      topK: $("search-topk").value,
+      rerank: $("search-rerank").checked,
+      backend: $("search-backend").value,
+      filters: built.filters,
+      includeReferences: $("search-include-references").checked
+    });
+    return {
+      body: scoped.body,
+      problems: built.problems.concat(scoped.problems)
+    };
   }
 
   function relevanceBadge(relevance) {
@@ -348,8 +352,9 @@
 
   function runSearch(event) {
     if (event) event.preventDefault();
-    var body = collectSearchRequest();
-    var problems = body.problems || [];
+    var collected = collectSearchRequest();
+    var body = collected.body;
+    var problems = collected.problems || [];
     delete body.problems;              // 只是给人看的提示，不进请求体
     if (problems.length) toast(problems.join("；"), "warn");
     var results = $("search-results");

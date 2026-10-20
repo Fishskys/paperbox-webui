@@ -326,6 +326,21 @@ code {
   grid-column: 1 / -1;
 }
 
+/* 搜索框 + 左侧搜索项下拉同一行（仿 IEEE：先选范围再输入） */
+.search-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.search-input-row select {
+  flex: 0 0 auto;
+}
+
+.search-input-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .form-actions {
   display: flex;
   align-items: flex-end;

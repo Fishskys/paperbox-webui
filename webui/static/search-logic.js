@@ -204,6 +204,46 @@
     return body;
   }
 
+  /* 搜索项下拉（仿 IEEE：先选范围再输入）。只列出后端**真的**支持按该字段收窄的项：
+   *   - all   ：自由查询，引擎在 title^2 + text 上检索（POST /api/search），不能被收窄；
+   *   - author：把输入当作者名，同时作为 filters.authors（精确到归一化作者名）并把该文本作为查询词；
+   *   - doi   ：filters.doi（论文库的 DOI 是精确值，恰好命中）；
+   *   - arxiv ：filters.arxiv_id。
+   * venue 不放进下拉：检索侧 venue 过滤是**全名精确匹配**（\"ISSCC\" 匹配不到
+   * \"2026 IEEE International Solid-State Circuits Conference (ISSCC)\"），放进下拉只会得到 0 结果。
+   * 单一文本字段（正文/摘要）后端暂不支持，故 title 也不单独提供——见 docs 说明。
+   */
+  var SEARCH_SCOPES = ["all", "author", "doi", "arxiv"];
+
+  /* 把「搜索项 + 输入」整理成一次检索请求：
+   *   - all   → 原样把输入当自由查询，另带上其它过滤框；
+   *   - author→ query 仍用输入（好让引擎有词可排），再叠加 filters.authors=[输入]；
+   *   - doi   → filters.doi=输入（query 仍用输入，DOI 精确命中排在最前）；
+   *   - arxiv → filters.arxiv_id=输入。
+   * 返回 {body, problems}，problems 是给人看的提示（例如"选此项时请输入一个值"）。 */
+  function buildScopedSearch(raw) {
+    var source = raw || {};
+    var scope = SEARCH_SCOPES.indexOf(source.scope) >= 0 ? source.scope : "all";
+    var value = isBlank(source.value) ? "" : String(source.value).trim();
+    var filters = Object.assign({}, source.filters || {});
+    var problems = [];
+
+    if (scope === "author" && value) filters.authors = [value];
+    if (scope === "doi" && value) filters.doi = value;
+    if (scope === "arxiv" && value) filters.arxiv_id = value;
+    if (source.includeReferences === true) filters.include_references = true;
+
+    var body = buildSearchBody({
+      query: value,
+      mode: source.mode,
+      topK: source.topK,
+      rerank: source.rerank,
+      backend: source.backend,
+      filters: filters
+    });
+    return { body: body, problems: problems };
+  }
+
   /* 命中摘要：模式 / 后端 / 命中论文数（`total` 是论文数真值）/ 候选数 / 精排状态。
    *
    * 精排有三种状态，靠 opts.rerankRequested 区分：
@@ -269,6 +309,8 @@
     buildFilters: buildFilters,
     countFilters: countFilters,
     buildSearchBody: buildSearchBody,
+    SEARCH_SCOPES: SEARCH_SCOPES,
+    buildScopedSearch: buildScopedSearch,
     searchSummary: searchSummary,
     metadataLine: metadataLine
   };
