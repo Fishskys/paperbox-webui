@@ -174,6 +174,33 @@ async def apply_metadata(
     return _json(response)
 
 
+@router.post("/metadata/reextract")
+async def reextract_library_metadata(
+    body: dict[str, Any] = Body(default={}),
+    client: PaperboxClient = Depends(get_client),
+) -> JSONResponse:
+    """对全库已入库论文重新提取元数据（补空缺、不覆盖；admin 档）。
+
+    透传 paperbox 的 ``POST /api/metadata/reextract``：``dry_run`` 默认 true、``limit``
+    可选限制篇数、``refresh_index`` 默认 true。它会遍历每篇论文的 PDF，可能跑很久（小时级），
+    故用较长的 ``library_timeout``；权限由 paperbox 的 ``require_admin`` 把关。
+    """
+    payload = {
+        "dry_run": bool(body.get("dry_run", True)),
+        "refresh_index": bool(body.get("refresh_index", True)),
+        "limit": body.get("limit"),
+    }
+    try:
+        response = await client.reextract_library_metadata(
+            dry_run=payload["dry_run"],
+            limit=payload["limit"],
+            refresh_index=payload["refresh_index"],
+        )
+    except PaperboxUnreachable as exc:
+        return unreachable(exc)
+    return _json(response)
+
+
 def _json(response) -> JSONResponse:
     if response.ok:
         return JSONResponse(

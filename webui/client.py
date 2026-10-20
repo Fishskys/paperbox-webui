@@ -378,3 +378,22 @@ class PaperboxClient:
             f"/api/papers/{paper_id}/metadata/reextract",
             json={"dry_run": dry_run, "refresh_index": refresh_index},
         )
+
+    async def reextract_library_metadata(
+        self,
+        *,
+        dry_run: bool,
+        limit: int | None = None,
+        refresh_index: bool = True,
+    ) -> PaperboxResponse:
+        """Whole-library metadata re-extract (admin; walks every stored PDF)."""
+        return await self._request(
+            "POST",
+            "/api/metadata/reextract",
+            json={
+                "dry_run": dry_run,
+                "limit": limit,
+                "refresh_index": refresh_index,
+            },
+            timeout=self.settings.library_timeout,
+        )

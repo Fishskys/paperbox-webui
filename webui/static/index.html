@@ -653,6 +653,28 @@
             <button type="button" class="btn btn-danger" id="btn-metadata-apply-run">执行批量应用</button>
           </div>
         </div>
+
+        <form class="card" id="metadata-reextract-form">
+          <h2>全库重提取元数据</h2>
+          <p class="muted">
+            对全库已入库论文重跑元数据发现（读 PDF 的 Info/XMP、前两页与文件名），按「只填空、不覆盖已有/人工值」
+            合并。不重解析正文、不重嵌。admin 档；遍历每篇 PDF 可能要很久（小时级），可用「篇数上限」先试一小批。
+          </p>
+          <div class="form-grid">
+            <label class="field">
+              <span>篇数上限（可选）</span>
+              <input type="number" id="metadata-reextract-limit" placeholder="不填=全部" min="1" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="metadata-reextract-refresh-index" checked /> 顺带刷新索引元数据快照
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-metadata-reextract-dry">试运行（不写库）</button>
+            <button type="button" class="btn btn-danger" id="btn-metadata-reextract-run">执行全库重提取</button>
+          </div>
+          <p class="muted" id="metadata-reextract-summary">尚未执行</p>
+        </form>
       </section>
     </main>
 

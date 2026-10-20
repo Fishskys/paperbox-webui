@@ -1133,6 +1133,47 @@ def test_identifier_mirror_audit_unreachable_is_502() -> None:
     assert response.status_code == 502
 
 
+def test_library_reextract_defaults_to_dry_run_true() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"dry_run": True, "papers": 36, "changed_papers": 3})
+
+    client, seen = build_app(handler)
+    response = client.post("/api/ui/metadata/reextract", json={})
+
+    assert response.status_code == 200
+    request = seen[0]
+    assert request.method == "POST"
+    assert request.url.path == "/api/metadata/reextract"
+    body = json.loads(request.content)
+    assert body["dry_run"] is True
+    assert body["refresh_index"] is True
+    assert body["limit"] is None
+
+
+def test_library_reextract_forwards_limit_and_apply() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"dry_run": False, "papers": 5})
+
+    client, seen = build_app(handler)
+    client.post(
+        "/api/ui/metadata/reextract",
+        json={"dry_run": False, "limit": 5, "refresh_index": False},
+    )
+
+    body = json.loads(seen[0].content)
+    assert body == {"dry_run": False, "limit": 5, "refresh_index": False}
+
+
+def test_library_reextract_admin_gate_is_passed_through() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "insufficient role"})
+
+    client, _ = build_app(handler)
+    response = client.post("/api/ui/metadata/reextract", json={})
+
+    assert response.status_code == 403
+
+
 # --------------------------------------------------------------------------- #
 # /api/ui/metadata/*
 # --------------------------------------------------------------------------- #

@@ -2850,6 +2850,71 @@
       });
   }
 
+  /* 全库重提取元数据：先 dry_run 预览受影响篇数，确认后再落库（admin、可能很久）。 */
+  function runLibraryReextract(apply) {
+    var limitRaw = $("metadata-reextract-limit").value.trim();
+    var limit = limitRaw ? Number(limitRaw) : null;
+    if (limitRaw && (!Number.isInteger(limit) || limit < 1)) {
+      toast("篇数上限必须是正整数", "warn");
+      return;
+    }
+    var refreshIndex = $("metadata-reextract-refresh-index").checked;
+    var summary = $("metadata-reextract-summary");
+    var payload = { dry_run: !apply, limit: limit, refresh_index: refreshIndex };
+
+    function call(button, disable) {
+      if (button) button.disabled = disable;
+    }
+    var dryBtn = $("btn-metadata-reextract-dry");
+    var runBtn = $("btn-metadata-reextract-run");
+    call(dryBtn, true);
+    call(runBtn, true);
+    clear(summary);
+    summary.textContent = apply ? "写入中…（可能较久）" : "试运行中…";
+
+    api("/api/ui/metadata/reextract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (result) {
+        var line =
+          "论文 " + text(result.papers, 0) +
+          " 篇 · 有变化 " + text(result.changed_papers, 0) +
+          " 篇 · 补字段 " + text(result.added_fields, 0) +
+          " · 补标识符 " + text(result.added_identifiers, 0) +
+          (typeof result.skipped_no_file === "number" ? " · 无原件跳过 " + result.skipped_no_file : "") +
+          (typeof result.failed === "number" && result.failed ? " · 失败 " + result.failed : "");
+        var errors = Array.isArray(result.errors) ? result.errors : [];
+
+        if (!apply) {
+          summary.textContent = "试运行：" + line;
+          var go = window.confirm(
+            "试运行结果：\n" + line + "\n\n确认写入？（会补空缺，不覆盖已有/人工值）"
+          );
+          if (go) {
+            call(dryBtn, false);
+            call(runBtn, false);
+            runLibraryReextract(true);
+            return;
+          }
+        } else {
+          summary.textContent = "已写入：" + line;
+          toast("全库重提取完成：有变化 " + text(result.changed_papers, 0) + " 篇", "ok");
+          loadLibrary();
+        }
+        if (errors.length && window.console) window.console.warn("metadata reextract errors", errors);
+        call(dryBtn, false);
+        call(runBtn, false);
+      })
+      .catch(function (error) {
+        summary.textContent = "失败：" + error.message;
+        toast("全库重提取失败：" + error.message, "error");
+        call(dryBtn, false);
+        call(runBtn, false);
+      });
+  }
+
   /* ---------------- 绑定 ---------------- */
 
   function bind() {
@@ -3017,6 +3082,16 @@
       renderReviewConflicts(state.metadata.reviewConflicts);
     });
     $("btn-metadata-apply-run").addEventListener("click", runMetadataApply);
+
+    $("metadata-reextract-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      runLibraryReextract(false);
+    });
+    $("btn-metadata-reextract-run").addEventListener("click", function () {
+      if (window.confirm("确认对全库论文执行重提取？会遍历每篇 PDF，可能很久（小时级）。")) {
+        runLibraryReextract(true);
+      }
+    });
 
     $("btn-refresh-health").addEventListener("click", function () {
       var button = this;

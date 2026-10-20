@@ -51,6 +51,15 @@ class Settings(BaseSettings):
         """Ingestion is slower than the regular calls (SPEC 3: 60s)."""
         return max(self.request_timeout, 60.0)
 
+    @property
+    def library_timeout(self) -> float:
+        """Whole-library batches (metadata re-extract walks every PDF) run long.
+
+        Still a finite ceiling: a very large library should be driven with a
+        ``limit`` (or the CLI) rather than one unbounded HTTP request.
+        """
+        return max(self.request_timeout, 900.0)
+
 
 @lru_cache
 def get_settings() -> Settings:
