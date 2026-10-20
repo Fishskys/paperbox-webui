@@ -239,6 +239,23 @@ def test_papers_list_forwards_pagination_and_filters() -> None:
     assert request.url.params["q"] == "bert"
 
 
+def test_papers_list_forwards_repeated_author_filter() -> None:
+    """The library tab's author box sends one ``author`` param per name (ANDed)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return ok_json({"total": 0, "limit": 20, "offset": 0, "papers": []})
+
+    client, seen = build_app(handler)
+    response = client.get(
+        "/api/ui/papers",
+        params=[("author", "j. smith"), ("author", "a. lee")],
+    )
+
+    assert response.status_code == 200
+    params = seen[0].url.params
+    assert params.get_list("author") == ["j. smith", "a. lee"]
+
+
 def test_paper_detail_404_is_passed_through() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"detail": "paper not found"})

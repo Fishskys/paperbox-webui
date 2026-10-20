@@ -482,6 +482,18 @@
     var query = $("library-q").value.trim();
     if (status) params.set("status", status);
     if (query) params.set("q", query);
+    // Authors: comma-separated; each one is a repeated `author` param, ANDed by paperbox.
+    $("library-author")
+      .value.split(/[,，]/)
+      .map(function (name) {
+        return name.trim();
+      })
+      .filter(function (name) {
+        return name.length > 0;
+      })
+      .forEach(function (name) {
+        params.append("author", name);
+      });
 
     return api("/api/ui/papers?" + params.toString())
       .then(function (data) {

@@ -21,12 +21,15 @@ async def list_papers(
     offset: int = Query(0, ge=0),
     status: str | None = None,
     q: str | None = None,
+    author: list[str] | None = Query(
+        None, description="author name (repeatable, ANDed); matched on the normalized name"
+    ),
     client: PaperboxClient = Depends(get_client),
 ) -> JSONResponse:
-    """Proxy ``GET /api/papers`` with limit/offset/status/q passed straight through."""
+    """Proxy ``GET /api/papers`` with limit/offset/status/q/author passed straight through."""
     try:
         response = await client.list_papers(
-            limit=limit, offset=offset, status=status, q=q
+            limit=limit, offset=offset, status=status, q=q, author=author
         )
     except PaperboxUnreachable as exc:
         return unreachable(exc)

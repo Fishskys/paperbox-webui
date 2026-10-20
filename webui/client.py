@@ -137,11 +137,18 @@ class PaperboxClient:
         offset: int | None = None,
         status: str | None = None,
         q: str | None = None,
+        author: list[str] | None = None,
     ) -> PaperboxResponse:
         return await self._request(
             "GET",
             "/api/papers",
-            params={"limit": limit, "offset": offset, "status": status, "q": q},
+            params={
+                "limit": limit,
+                "offset": offset,
+                "status": status,
+                "q": q,
+                "author": author,
+            },
         )
 
     async def get_paper(self, paper_id: str) -> PaperboxResponse:
